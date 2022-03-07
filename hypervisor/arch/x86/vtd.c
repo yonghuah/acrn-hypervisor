@@ -169,11 +169,11 @@ static int32_t register_hrhd_units(void)
 static inline void dmar_wait_completion(const struct dmar_drhd_rt *dmar_unit, uint32_t offset,
 	uint32_t mask, uint32_t pre_condition, uint32_t *status)
 {
-	/* variable start isn't used when built as release version */
-	__unused uint64_t start = cpu_ticks();
-
 	dev_dbg(DBG_LEVEL_IOMMU, "%s offset: 0x%x, mask: 0x%x, pre_condition: %d\n",
 			__func__, offset, mask, pre_condition);
+
+	/* variable start isn't used when built as release version */
+	__unused uint64_t start = cpu_ticks();
 
 	do {
 		ASSERT(((cpu_ticks() - start) < TICKS_PER_MS), "DMAR OP Timeout!");
@@ -471,6 +471,70 @@ static struct dmar_drhd_rt *device_to_dmaru(uint8_t bus, uint8_t devfun)
 void dmar_issue_qi_request(struct dmar_drhd_rt *dmar_unit, struct dmar_entry invalidate_desc)
 {
 	struct dmar_entry *invalidate_desc_ptr;
+
+	spinlock_obtain(&(dmar_unit->lock));
+
+	invalidate_desc_ptr = (struct dmar_entry *)(dmar_unit->qi_queue + dmar_unit->qi_tail);
+
+	invalidate_desc_ptr->hi_64 = invalidate_desc.hi_64;
+	invalidate_desc_ptr->lo_64 = invalidate_desc.lo_64;
+	dmar_unit->qi_tail = (dmar_unit->qi_tail + DMAR_QI_INV_ENTRY_SIZE) % DMAR_INVALIDATION_QUEUE_SIZE;
+
+	iommu_write32(dmar_unit, DMAR_IQT_REG, dmar_unit->qi_tail);
+
+	spinlock_release(&(dmar_unit->lock));
+}
+
+bool dmar_issue_qi_complete(struct dmar_drhd_rt *dmar_unit)
+{
+	bool done = true;
+	struct dmar_entry *invalidate_desc_ptr, *dump_entry;
+	uint32_t qi_status = 0U;
+	uint64_t start, count = 5UL, head;
+
+	spinlock_obtain(&(dmar_unit->lock));
+
+	invalidate_desc_ptr = (struct dmar_entry *)(dmar_unit->qi_queue + dmar_unit->qi_tail);
+
+	invalidate_desc_ptr->hi_64 = hva2hpa(&qi_status);
+	invalidate_desc_ptr->lo_64 = DMAR_INV_WAIT_DESC_LOWER;
+	dmar_unit->qi_tail = (dmar_unit->qi_tail + DMAR_QI_INV_ENTRY_SIZE) % DMAR_INVALIDATION_QUEUE_SIZE;
+
+	qi_status = DMAR_INV_STATUS_INCOMPLETE;
+	iommu_write32(dmar_unit, DMAR_IQT_REG, dmar_unit->qi_tail);
+
+	start = cpu_ticks();
+	while (qi_status != DMAR_INV_STATUS_COMPLETED) {
+		if ((cpu_ticks() - start) > TICKS_PER_MS) {
+			pr_err("DMAR%d OP Timeout! @ %s, 0x%lx, 0x%lx",dmar_unit->index, __func__,
+				invalidate_desc_ptr->hi_64, invalidate_desc_ptr->lo_64);
+			head = iommu_read32(dmar_unit, DMAR_IQH_REG);
+			dump_entry = (struct dmar_entry *)(dmar_unit->qi_queue + head);
+
+			pr_err("DMAR%d Reg0x%x: 0x%lx, 0x%lx, 0x%lx",dmar_unit->index, DMAR_FSTS_REG,
+					iommu_read32(dmar_unit, DMAR_FSTS_REG),
+					dump_entry->lo_64, dump_entry->hi_64);
+
+			iommu_write32(dmar_unit, DMAR_FSTS_REG, 1U << 4U);
+
+			//start = cpu_ticks();
+			count--;
+			if (count == 0UL) {
+				done = false;
+			break;
+			}
+		}
+		asm_pause();
+	}
+
+	spinlock_release(&(dmar_unit->lock));
+
+	return done;
+}
+
+static void dmar_issue_qi_request_complete(struct dmar_drhd_rt *dmar_unit, struct dmar_entry invalidate_desc)
+{
+	struct dmar_entry *invalidate_desc_ptr;
 	uint32_t qi_status = 0U;
 	uint64_t start;
 
@@ -494,7 +558,10 @@ void dmar_issue_qi_request(struct dmar_drhd_rt *dmar_unit, struct dmar_entry inv
 	start = cpu_ticks();
 	while (qi_status != DMAR_INV_STATUS_COMPLETED) {
 		if ((cpu_ticks() - start) > TICKS_PER_MS) {
-			pr_err("DMAR OP Timeout! @ %s", __func__);
+			pr_err("DMAR%d OP Timeout! @ %s, 0x%lx, 0x%lx", dmar_unit->index, __func__,
+				invalidate_desc_ptr->hi_64, invalidate_desc_ptr->lo_64);
+
+			start = cpu_ticks();
 			break;
 		}
 		asm_pause();
@@ -533,7 +600,7 @@ static void dmar_invalid_context_cache(struct dmar_drhd_rt *dmar_unit,
 	}
 
 	if (invalidate_desc.lo_64 != 0UL) {
-		dmar_issue_qi_request(dmar_unit, invalidate_desc);
+		dmar_issue_qi_request_complete(dmar_unit, invalidate_desc);
 	}
 }
 
@@ -576,7 +643,7 @@ static void dmar_invalid_iotlb(struct dmar_drhd_rt *dmar_unit, uint16_t did, uin
 	}
 
 	if (invalidate_desc.lo_64 != 0UL) {
-		dmar_issue_qi_request(dmar_unit, invalidate_desc);
+		dmar_issue_qi_request_complete(dmar_unit, invalidate_desc);
 	}
 }
 
@@ -629,7 +696,7 @@ static void dmar_invalid_iec(struct dmar_drhd_rt *dmar_unit, uint16_t intr_index
 	}
 
 	if (invalidate_desc.lo_64 != 0UL) {
-		dmar_issue_qi_request(dmar_unit, invalidate_desc);
+		dmar_issue_qi_request_complete(dmar_unit, invalidate_desc);
 	}
 }
 
@@ -644,7 +711,9 @@ static void dmar_set_root_table(struct dmar_drhd_rt *dmar_unit)
 	uint32_t status;
 
 	spinlock_obtain(&(dmar_unit->lock));
-	iommu_write64(dmar_unit, DMAR_RTADDR_REG, dmar_unit->root_table_addr);
+	if (dmar_unit->features & DMAR_FEAT_IOM) {
+		iommu_write64(dmar_unit, DMAR_RTADDR_REG, dmar_unit->root_table_addr);
+	}
 
 	iommu_write32(dmar_unit, DMAR_GCMD_REG, dmar_unit->gcmd | DMA_GCMD_SRTP);
 
@@ -752,7 +821,7 @@ static void dmar_fault_handler(uint32_t irq, void *data)
 	struct dmar_entry fault_record;
 	int32_t loop = 0;
 
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: irq = %d", __func__, irq);
+	dev_dbg(3, "%s: irq = %d", __func__, irq);
 
 	fsr = iommu_read32(dmar_unit, DMAR_FSTS_REG);
 
@@ -878,9 +947,7 @@ static void prepare_dmar(struct dmar_drhd_rt *dmar_unit)
 
 	dmar_enable_qi(dmar_unit);
 
-	if (dmar_unit->features & DMAR_FEAT_IOM) {
-		dmar_set_root_table(dmar_unit);
-	}
+	dmar_set_root_table(dmar_unit);
 }
 
 static void enable_dmar(struct dmar_drhd_rt *dmar_unit)
@@ -890,20 +957,16 @@ static void enable_dmar(struct dmar_drhd_rt *dmar_unit)
 		dmar_invalid_iec_global(dmar_unit);
 	}
 
-	if (dmar_unit->features & DMAR_FEAT_IOM) {
-		dmar_invalid_context_cache_global(dmar_unit);
-		dmar_invalid_iotlb_global(dmar_unit);
-		dmar_enable_translation(dmar_unit);
-	}
+	dmar_invalid_context_cache_global(dmar_unit);
+	dmar_invalid_iotlb_global(dmar_unit);
+	dmar_enable_translation(dmar_unit);
 }
 
 static void disable_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	dmar_disable_qi(dmar_unit);
 
-	if (dmar_unit->features & DMAR_FEAT_IOM) {
-		dmar_disable_translation(dmar_unit);
-	}
+	dmar_disable_translation(dmar_unit);
 
 	dmar_fault_event_mask(dmar_unit);
 
@@ -916,10 +979,8 @@ static void suspend_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	uint32_t i;
 
-	if (dmar_unit->features & DMAR_FEAT_IOM) {
-		dmar_invalid_context_cache_global(dmar_unit);
-		dmar_invalid_iotlb_global(dmar_unit);
-	}
+	dmar_invalid_context_cache_global(dmar_unit);
+	dmar_invalid_iotlb_global(dmar_unit);
 
 	if (dmar_unit->features & DMAR_FEAT_IR) {
 		dmar_invalid_iec_global(dmar_unit);

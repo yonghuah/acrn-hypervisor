@@ -861,6 +861,7 @@ static int32_t shell_dump_host_mem(int32_t argc, char **argv)
 	} else	{
 		hva = (uint64_t *)strtoul_hex(argv[1]);
 		length = (uint32_t)strtol_deci(argv[2]);
+		stac();
 
 		snprintf(temp_str, MAX_STR_SIZE, "Dump physical memory addr: 0x%016lx, length %d:\r\n", hva, length);
 		shell_puts(temp_str);
@@ -873,6 +874,7 @@ static int32_t shell_dump_host_mem(int32_t argc, char **argv)
 			shell_puts(temp_str);
 		}
 		ret = 0;
+		clac();
 	}
 
 	return ret;

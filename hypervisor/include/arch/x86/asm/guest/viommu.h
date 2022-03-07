@@ -8,6 +8,8 @@
 #define VIOMMU_H
 
 struct acrn_viommu {
+	spinlock_t lock;
+
 	struct acrn_vm *vm;
 	struct dmar_drhd_rt *drhd_rt;
 

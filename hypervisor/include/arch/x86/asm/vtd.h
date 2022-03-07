@@ -832,5 +832,6 @@ void iommu_flush_cache(const void *p, uint32_t size);
   */
 
 void dmar_issue_qi_request(struct dmar_drhd_rt *dmar_unit, struct dmar_entry invalidate_desc);
+bool dmar_issue_qi_complete(struct dmar_drhd_rt *dmar_unit);
 
 #endif

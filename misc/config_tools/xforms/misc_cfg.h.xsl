@@ -93,7 +93,7 @@
     </xsl:if>
   </xsl:variable>
   <xsl:value-of select="acrn:define('SERVICE_VM_ROOTFS', concat($quot, $sos_rootfs, ' ', $quot), '')" />
-  <xsl:value-of select="acrn:define('SERVICE_VM_BOOTARGS_DIFF', concat($quot, $sos_bootargs, ' ', $maxcpus, ' ', $hugepage_kernelstring, ' ', $quot), '')" />
+  <xsl:value-of select="acrn:define('SERVICE_VM_BOOTARGS_DIFF', concat($quot, $sos_bootargs, ' ', $maxcpus, ' ', ' ', ' ', $quot), '')" />
 </xsl:template>
 
 <xsl:template name="cpu_affinity">
