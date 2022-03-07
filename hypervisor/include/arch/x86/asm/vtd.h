@@ -8,10 +8,17 @@
 #define VTD_H
 #include <types.h>
 #include <pci.h>
+#include <asm/io.h>
+#include <asm/lib/spinlock.h>
+
 #include <platform_acpi_info.h>
 
 #define INVALID_DRHD_INDEX 0xFFFFFFFFU
 #define INVALID_IRTE_ID 0xFFFFU
+
+#define DMAR_INVALIDATION_QUEUE_SIZE	4096U
+#define DMAR_QI_INV_ENTRY_SIZE		16U
+#define DMAR_NUM_IR_ENTRIES_PER_PAGE	256U
 
 /*
  * Intel IOMMU register specification per version 1.0 public spec.
@@ -41,6 +48,44 @@
 #define DMAR_IQA_REG    0x90U    /* Invalidation queue addr register */
 #define DMAR_ICS_REG    0x9cU    /* Invalidation complete status register */
 #define DMAR_IRTA_REG   0xb8U    /* Interrupt remapping table addr register */
+
+#define ROOT_ENTRY_LOWER_PRESENT_POS        (0U)
+#define ROOT_ENTRY_LOWER_PRESENT_MASK       (1UL << ROOT_ENTRY_LOWER_PRESENT_POS)
+#define ROOT_ENTRY_LOWER_CTP_POS            (12U)
+#define ROOT_ENTRY_LOWER_CTP_MASK           (0xFFFFFFFFFFFFFUL << ROOT_ENTRY_LOWER_CTP_POS)
+
+#define CONFIG_MAX_IOMMU_NUM		DRHD_COUNT
+
+/* 4 iommu fault register state */
+#define	IOMMU_FAULT_REGISTER_STATE_NUM	4U
+#define	IOMMU_FAULT_REGISTER_SIZE	4U
+
+#define CTX_ENTRY_UPPER_AW_POS          (0U)
+#define CTX_ENTRY_UPPER_AW_MASK         (0x7UL << CTX_ENTRY_UPPER_AW_POS)
+#define CTX_ENTRY_UPPER_DID_POS         (8U)
+#define CTX_ENTRY_UPPER_DID_MASK        (0xFFFFUL << CTX_ENTRY_UPPER_DID_POS)
+#define CTX_ENTRY_LOWER_P_POS           (0U)
+#define CTX_ENTRY_LOWER_P_MASK          (0x1UL << CTX_ENTRY_LOWER_P_POS)
+#define CTX_ENTRY_LOWER_FPD_POS         (1U)
+#define CTX_ENTRY_LOWER_FPD_MASK        (0x1UL << CTX_ENTRY_LOWER_FPD_POS)
+#define CTX_ENTRY_LOWER_TT_POS          (2U)
+#define CTX_ENTRY_LOWER_TT_MASK         (0x3UL << CTX_ENTRY_LOWER_TT_POS)
+#define CTX_ENTRY_LOWER_SLPTPTR_POS     (12U)
+#define CTX_ENTRY_LOWER_SLPTPTR_MASK    (0xFFFFFFFFFFFFFUL <<  CTX_ENTRY_LOWER_SLPTPTR_POS)
+
+#define DMAR_INV_STATUS_WRITE_SHIFT	5U
+#define DMAR_INV_CONTEXT_CACHE_DESC	0x01UL
+#define DMAR_INV_IOTLB_DESC		0x02UL
+#define DMAR_INV_IEC_DESC		0x04UL
+#define DMAR_INV_WAIT_DESC		0x05UL
+#define DMAR_INV_DESC_MASK		0x0FUL
+#define DMAR_INV_STATUS_WRITE		(1UL << DMAR_INV_STATUS_WRITE_SHIFT)
+#define DMAR_INV_STATUS_INCOMPLETE	0UL
+#define DMAR_INV_STATUS_COMPLETED	1UL
+#define DMAR_INV_STATUS_DATA_SHIFT	32U
+#define DMAR_INV_STATUS_DATA		(DMAR_INV_STATUS_COMPLETED << DMAR_INV_STATUS_DATA_SHIFT)
+#define DMAR_INV_WAIT_DESC_LOWER	(DMAR_INV_STATUS_WRITE | DMAR_INV_WAIT_DESC | DMAR_INV_STATUS_DATA)
+
 
 /* Make sure all PT IRQs work w/ interrupt remapping or post interrupt */
 #if (CONFIG_MAX_PT_IRQ_ENTRIES <= 256)
@@ -564,9 +609,63 @@ union dmar_ir_entry {
 	} bits __packed;
 };
 
+/* dmar unit runtime data */
+struct dmar_drhd_rt {
+	uint32_t index;
+	spinlock_t lock;
+
+#define DMAR_FEAT_IOM  (1U << 0U)      /* IO address translation */
+#define DMAR_FEAT_IR   (1U << 1U)      /* Interrupt remapping */
+#define DMAR_FEAT_PI   (1U << 2U)      /* Posted Interrupt */
+	uint32_t features;
+
+	struct dmar_drhd *drhd;
+
+	uint64_t root_table_addr;
+	uint64_t ir_table_addr;
+	uint64_t irte_alloc_bitmap[MAX_IR_ENTRIES / 64U];
+	uint64_t irte_reserved_bitmap[MAX_IR_ENTRIES / 64U];
+	uint64_t qi_queue;
+	uint16_t qi_tail;
+
+	uint64_t cap;
+	uint64_t ecap;
+	uint32_t gcmd;  /* sw cache value of global cmd register */
+
+	uint32_t dmar_irq;
+
+	bool cap_pw_coherency;  /* page-walk coherency */
+	uint8_t cap_msagaw;
+	uint16_t cap_num_fault_regs;
+	uint16_t cap_fault_reg_offset;
+	uint16_t ecap_iotlb_offset;
+	uint32_t fault_state[IOMMU_FAULT_REGISTER_STATE_NUM]; /* 32bit registers */
+};
 #ifdef CONFIG_ACPI_PARSE_ENABLED
 int32_t parse_dmar_table(struct dmar_info *plat_dmar_info);
 #endif
+
+static uint32_t iommu_read32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
+{
+	return mmio_read32(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
+
+static uint64_t iommu_read64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
+{
+	return mmio_read64(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
+
+static void iommu_write32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint32_t value)
+{
+	mmio_write32(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
+
+static void iommu_write64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint64_t value)
+{
+	mmio_write64(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
+
+struct dmar_drhd_rt *get_drhd_unit(uint32_t index);
 
 /**
  * @file vtd.h
@@ -731,5 +830,7 @@ void iommu_flush_cache(const void *p, uint32_t size);
 /**
   * @}
   */
+
+void dmar_issue_qi_request(struct dmar_drhd_rt *dmar_unit, struct dmar_entry invalidate_desc);
 
 #endif

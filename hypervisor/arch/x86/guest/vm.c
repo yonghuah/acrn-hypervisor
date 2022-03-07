@@ -44,6 +44,7 @@
 #endif
 #include <asm/boot/ld_sym.h>
 #include <asm/guest/optee.h>
+#include <asm/guest/viommu.h>
 
 /* Local variables */
 
@@ -692,6 +693,11 @@ int32_t create_vm(uint16_t vm_id, uint64_t pcpu_bitmap, struct acrn_vm_config *v
 		status = init_vpci(vm);
 		if (status == 0) {
 			enable_iommu();
+#ifdef CONFIG_VIOMMU_ENABLED
+			if (is_service_vm(vm)) {
+				init_viommu(vm);
+			}
+#endif
 
 			/* Create virtual uart;*/
 			init_legacy_vuarts(vm, vm_config->vuart);

@@ -10,6 +10,7 @@ GCC_MINOR=$(shell echo __GNUC_MINOR__ | $(CC) -E -x c - | tail -n 1)
 
 #enable stack overflow check
 STACK_PROTECTOR := 1
+CONFIG_VIOMMU_ENABLED := 1
 
 BASEDIR := $(shell pwd)
 HV_OBJDIR ?= $(CURDIR)/build
@@ -27,6 +28,7 @@ VP_HCALL_MOD = $(HV_MODDIR)/vp_hcall_mod.a
 LIB_DEBUG = $(HV_MODDIR)/libdebug.a
 LIB_RELEASE = $(HV_MODDIR)/librelease.a
 SYS_INIT_MOD = $(HV_MODDIR)/sys_init_mod.a
+
 
 # initialize the flags we used
 CFLAGS :=
@@ -61,7 +63,7 @@ CFLAGS += -fsigned-char
 CFLAGS += -m64 -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-fp-ret-in-387
 CFLAGS += -mno-red-zone -mpopcnt
 CFLAGS += -nostdinc -nostdlib -fno-common
-CFLAGS += -Werror
+#CFLAGS += -Werror
 
 # ACRN depends on zero length array. Silence the gcc if Warrary-bounds is default option
 CFLAGS += -Wno-array-bounds
@@ -72,6 +74,9 @@ else
 CFLAGS += -static
 endif
 
+ifdef CONFIG_VIOMMU_ENABLED
+CFLAGS += -DCONFIG_VIOMMU_ENABLED
+endif
 
 ifdef STACK_PROTECTOR
 ifeq (true, $(shell [ $(GCC_MAJOR) -gt 4 ] && echo true))
@@ -285,6 +290,9 @@ endif
 ifeq ($(CONFIG_NVMX_ENABLED),y)
 VP_BASE_C_SRCS += arch/x86/guest/nested.c
 VP_BASE_C_SRCS += arch/x86/guest/vept.c
+endif
+ifdef CONFIG_VIOMMU_ENABLED
+VP_BASE_C_SRCS += arch/x86/guest/viommu.c
 endif
 VP_BASE_C_SRCS += boot/guest/vboot_info.c
 ifeq ($(CONFIG_GUEST_KERNEL_BZIMAGE),y)
