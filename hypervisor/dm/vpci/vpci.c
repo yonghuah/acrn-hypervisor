@@ -614,9 +614,6 @@ static int32_t vpci_write_cfg(struct acrn_vpci *vpci, union pci_bdf bdf,
 		} else if (is_plat_hidden_pdev(bdf)) {
 			/* expose and pass through platform hidden devices */
 			pci_pdev_write_cfg(bdf, offset, bytes, val);
-		} else {
-			pr_acrnlog("%s %x:%x.%x not found! off: 0x%x, val: 0x%x\n", __func__,
-				bdf.bits.b, bdf.bits.d, bdf.bits.f, offset, val);
 		}
 	}
 	spinlock_release(&vpci->lock);

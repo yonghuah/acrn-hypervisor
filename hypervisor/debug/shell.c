@@ -52,6 +52,8 @@ static int32_t shell_cpuid(int32_t argc, char **argv);
 static int32_t shell_reboot(int32_t argc, char **argv);
 static int32_t shell_rdmsr(int32_t argc, char **argv);
 static int32_t shell_wrmsr(int32_t argc, char **argv);
+extern void get_guest_map_unmap(void);
+extern void list_shadow_table(void);
 
 static struct shell_cmd shell_cmds[] = {
 	{
@@ -503,6 +505,13 @@ static int32_t shell_cmd_help(__unused int32_t argc, __unused char **argv)
 
 	char str[MAX_STR_SIZE];
 	char* help_str;
+
+	
+	get_guest_map_unmap();
+	return 0;
+
+
+
 	/* Print title */
 	shell_puts("\r\nRegistered Commands:\r\n\r\n");
 
@@ -572,13 +581,8 @@ static int32_t shell_cmd_help(__unused int32_t argc, __unused char **argv)
 
 static int32_t shell_version(__unused int32_t argc, __unused char **argv)
 {
-	char temp_str[MAX_STR_SIZE];
-
-	snprintf(temp_str, MAX_STR_SIZE, "HV %s-%s-%s %s (daily tag: %s) %s@%s build by %s%s\nAPI %u.%u\r\n",
-		HV_FULL_VERSION, HV_BUILD_TIME, HV_BUILD_VERSION, HV_BUILD_TYPE, HV_DAILY_TAG, HV_BUILD_SCENARIO,
-		HV_BUILD_BOARD, HV_BUILD_USER, HV_CONFIG_TOOL, HV_API_MAJOR_VERSION, HV_API_MINOR_VERSION);
-	shell_puts(temp_str);
-
+//	get_guest_map_unmap();
+	list_shadow_table();
 	return 0;
 }
 

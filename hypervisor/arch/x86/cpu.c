@@ -11,6 +11,7 @@
 #include <asm/mmu.h>
 #include <asm/guest/ept.h>
 #include <asm/guest/vept.h>
+#include <asm/guest/viommu.h>
 #include <asm/vtd.h>
 #include <asm/lapic.h>
 #include <asm/irq.h>
@@ -285,6 +286,9 @@ void init_pcpu_post(uint16_t pcpu_id)
 		 * Reserve memory from platform E820 for EPT 4K pages for all VMs
 		 */
 		reserve_buffer_for_ept_pages();
+#if SHADOW_EN
+		viommu_reserve_buffer_for_shadow_pages();
+#endif
 
 		/*
 		 * Reserve memory from platform E820 for shadow EPT 4K pages

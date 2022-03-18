@@ -87,6 +87,16 @@
 #define DMAR_INV_WAIT_DESC_LOWER	(DMAR_INV_STATUS_WRITE | DMAR_INV_WAIT_DESC | DMAR_INV_STATUS_DATA)
 
 
+#define IOTLB_INV_LOWER_DID_POS		16U
+#define IOTLB_INV_LOWER_DID_MASK	(0xFFFFUL << IOTLB_INV_LOWER_DID_POS)
+
+#define IOTLB_INV_UPPER_AM_POS		0U
+#define IOTLB_INV_UPPER_AM_MASK		(0x2FUL << IOTLB_INV_UPPER_AM_POS)
+#define IOTLB_INV_UPPER_IH_POS		6U
+#define IOTLB_INV_UPPER_IH_MASK		(0x1UL << IOTLB_INV_UPPER_IH_POS)
+#define IOTLB_INV_UPPER_ADDR_POS	12U
+#define IOTLB_INV_UPPER_ADDR_MASK	(0xFFFFFFFFFFFFFUL << IOTLB_INV_UPPER_ADDR_POS)
+
 /* Make sure all PT IRQs work w/ interrupt remapping or post interrupt */
 #if (CONFIG_MAX_PT_IRQ_ENTRIES <= 256)
 #define MAX_IR_ENTRIES 256
@@ -644,6 +654,16 @@ struct dmar_drhd_rt {
 #ifdef CONFIG_ACPI_PARSE_ENABLED
 int32_t parse_dmar_table(struct dmar_info *plat_dmar_info);
 #endif
+
+static inline uint64_t dmar_get_bitslice(uint64_t var, uint64_t mask, uint32_t pos)
+{
+	return ((var & mask) >> pos);
+}
+
+static inline uint64_t dmar_set_bitslice(uint64_t var, uint64_t mask, uint32_t pos, uint64_t val)
+{
+	return ((var & ~mask) | ((val << pos) & mask));
+}
 
 static uint32_t iommu_read32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
 {

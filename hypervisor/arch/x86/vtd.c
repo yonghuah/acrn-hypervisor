@@ -31,7 +31,7 @@
 #define DBG_LEVEL_IOMMU 6U
 #endif
 #define LEVEL_WIDTH 9U
-
+#if 0
 static inline uint64_t dmar_get_bitslice(uint64_t var, uint64_t mask, uint32_t pos)
 {
 	return ((var & mask) >> pos);
@@ -41,6 +41,7 @@ static inline uint64_t dmar_set_bitslice(uint64_t var, uint64_t mask, uint32_t p
 {
 	return ((var & ~mask) | ((val << pos) & mask));
 }
+#endif
 
 /* translation type */
 #define DMAR_CTX_TT_UNTRANSLATED    0x0UL
