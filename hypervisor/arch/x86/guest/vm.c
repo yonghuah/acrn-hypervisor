@@ -467,6 +467,7 @@ static void prepare_service_vm_memmap(struct acrn_vm *vm)
 
 	/* create real ept map for [0, service_vm_high64_max_ram) with UC */
 	ept_add_mr(vm, pml4_page, 0UL, 0UL, service_vm_high64_max_ram, EPT_RWX | EPT_UNCACHED);
+	ept_add_mr(vm, pml4_page, MMIO64_START, MMIO64_START, MMIO64_END - MMIO64_START, EPT_RD | EPT_WR | EPT_UNCACHED);
 
 	/* update ram entries to WB attr */
 	for (i = 0U; i < entries_count; i++) {

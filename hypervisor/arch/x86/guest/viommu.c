@@ -570,6 +570,47 @@ void *viommu_get_guest_pml4(struct acrn_viommu *vtd, uint16_t did)
 	return (void *) (vtd->guest_pml4_gpa[did]);
 }
 
+uint64_t get_iova_mapping_block(struct acrn_viommu *vtd, uint64_t *guest_pml4,  uint64_t iova_start, uint32_t max_size, uint64_t *size)
+{
+	uint64_t guest_size;
+	const uint64_t *guest_pte;
+	uint64_t hpa, gpa;
+	uint64_t iova_end = iova_start + max_size, iova = iova_start;
+	int loop = 0;
+	uint64_t map_hpa_base = 0, map_hpa_size = 0;
+
+
+	while (iova < iova_end) {
+		guest_pte = pgtable_lookup_entry(guest_pml4, iova, &guest_size, &pgtable_ops);
+		if (guest_pte != NULL) {
+			gpa = (((*guest_pte & (~EPT_PFN_HIGH_MASK)) & (~(guest_size - 1UL))) | (iova & (guest_size - 1UL)));
+			hpa = gpa2hpa(vtd->vm, gpa);
+			if (map_hpa_base == 0UL) {
+				map_hpa_base = hpa;
+				map_hpa_size = guest_size;
+				loop++;
+			} else if (hpa == (map_hpa_base + map_hpa_size)) {
+				map_hpa_size += guest_size;
+				loop++;
+				if (map_hpa_size >= max_size) {
+					break;
+				}
+			} else {
+				break;
+			}
+
+			iova += guest_size;
+		} else {
+			//pr_err("%s, fail to get mapping for iova:%llx, loop:%d.", __func__, iova, loop);
+			break;
+		}
+	}
+
+//	pr_err("%s, continouus block num:%d.", __func__, loop);
+	*size = map_hpa_size;
+	return map_hpa_base;
+}
+
 int sync_shadow(struct acrn_viommu *vtd, uint64_t *guest_pml4, uint64_t *shadow_pml4, uint64_t addr, uint32_t nr_pages, uint32_t did)
 {
 	int status = 0;
@@ -578,8 +619,43 @@ int sync_shadow(struct acrn_viommu *vtd, uint64_t *guest_pml4, uint64_t *shadow_
 	uint64_t gpa, hpa, prot;
 	uint64_t iova_end = addr + (nr_pages << 12), iova = addr;
 	int loop = 0;
+	bool iova_map =false, iova_unmap = false;
+	uint64_t map_hpa_size;
 
-//	pr_err("%s enter..., guest pml4:%llx, shadow pml4:%llx, iova:%llx, pages:%d.", __func__, guest_pml4, shadow_pml4, addr, nr_pages);
+#if 0
+//	pr_err("%s enter..., guest pml4:%llx, shadow pml4:%llx, iova:%llx, iova_end:%llx.", __func__, guest_pml4, shadow_pml4, addr, iova_end);
+	guest_pte = pgtable_lookup_entry(guest_pml4, iova, &guest_size, &pgtable_ops);
+	if (guest_pte == NULL) {
+		//pr_err("Remove: iova:0x%llx, size:0x%lx, did:%d, loop:%d.\n", iova, shadow_size, prot, did, loop);
+		viommu_shadow_del_mr(vtd, shadow_pml4, iova, nr_pages << 12);
+		vtd->unmap_cnt[did]++;
+	} else { /*mapping is present in guest.*/
+		//shadow_pte = pgtable_lookup_entry(shadow_pml4, iova, &shadow_size, &pgtable_ops);
+		 //mapping to shadow
+		 if (nr_pages == 1) {
+			gpa = (((*guest_pte & (~EPT_PFN_HIGH_MASK)) & (~(guest_size - 1UL))) | (iova & (guest_size - 1UL)));
+			hpa = gpa2hpa(vtd->vm, gpa);
+			viommu_shadow_add_mr(vtd, shadow_pml4, hpa, iova, guest_size, EPT_RWX);
+			vtd->map_cnt[did]++;
+		 } else {
+			while(iova < iova_end) {
+				map_hpa_size = 0;
+				hpa = get_iova_mapping_block(vtd, guest_pml4, iova, (iova_end - iova), &map_hpa_size);
+				if (map_hpa_size > 0) {
+					vtd->map_cnt[did]++;
+					viommu_shadow_add_mr(vtd, shadow_pml4, hpa, iova, map_hpa_size, EPT_RWX);
+					iova += map_hpa_size;
+				} else {
+				//	status = -1;
+					break;
+				}
+			}
+		}
+	}
+
+	return status;
+#else
+
 	while (iova < iova_end) {
 		guest_size = 0;
 		shadow_size = 0;
@@ -626,6 +702,9 @@ int sync_shadow(struct acrn_viommu *vtd, uint64_t *guest_pml4, uint64_t *shadow_
 		loop++;
 	}
 	return status;
+#endif
+
+
 }
 
 int viommu_shadow_page_table_sync(struct acrn_viommu *vtd, struct dmar_entry *entry)

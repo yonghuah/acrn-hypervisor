@@ -384,13 +384,13 @@ static int32_t dmar_register_hrhd(struct dmar_drhd_rt *dmar_unit)
 	dmar_unit->root_table_addr = hva2hpa(get_root_table(dmar_unit->index));
 	dmar_unit->ir_table_addr = hva2hpa(get_ir_table(dmar_unit->index));
 
-#if DBG_IOMMU
-	pr_info("version:0x%x, cap:0x%lx, ecap:0x%lx",
+#if 1//DBG_IOMMU
+	pr_err("======>version:0x%x, cap:0x%lx, ecap:0x%lx",
 		iommu_read32(dmar_unit, DMAR_VER_REG), dmar_unit->cap, dmar_unit->ecap);
-	pr_info("sagaw:0x%x, msagaw:0x%x, iotlb offset 0x%x",
+	pr_err("======>sagaw:0x%x, msagaw:0x%x, iotlb offset 0x%x",
 		iommu_cap_sagaw(dmar_unit->cap), dmar_unit->cap_msagaw, dmar_unit->ecap_iotlb_offset);
 
-	dmar_unit_show_capability(dmar_unit);
+//	dmar_unit_show_capability(dmar_unit);
 #endif
 
 	/* check capability */
