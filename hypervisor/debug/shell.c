@@ -41,6 +41,7 @@ static int32_t shell_list_vm(__unused int32_t argc, __unused char **argv);
 static int32_t shell_list_vcpu(__unused int32_t argc, __unused char **argv);
 static int32_t shell_vcpu_dumpreg(int32_t argc, char **argv);
 static int32_t shell_dump_host_mem(int32_t argc, char **argv);
+static int32_t shell_dump_viommu(int32_t argc, char **argv);
 static int32_t shell_dump_guest_mem(int32_t argc, char **argv);
 static int32_t shell_to_vm_console(int32_t argc, char **argv);
 static int32_t shell_show_cpu_int(__unused int32_t argc, __unused char **argv);
@@ -91,6 +92,13 @@ static struct shell_cmd shell_cmds[] = {
 		.cmd_param	= SHELL_CMD_DUMP_HOST_MEM_PARAM,
 		.help_str	= SHELL_CMD_DUMP_HOST_MEM_HELP,
 		.fcn		= shell_dump_host_mem,
+	},
+	{
+		.str		= SHELL_CMD_DUMP_VIOMMU,
+		.cmd_param	= SHELL_CMD_DUMP_VIOMMU_PARAM,
+		.help_str	= SHELL_CMD_DUMP_VIOMMU_HELP,
+		.fcn		= shell_dump_viommu,
+
 	},
 	{
 		.str		= SHELL_CMD_DUMP_GUEST_MEM,
@@ -507,8 +515,8 @@ static int32_t shell_cmd_help(__unused int32_t argc, __unused char **argv)
 	char* help_str;
 
 	
-	get_guest_map_unmap();
-	return 0;
+//	get_guest_map_unmap();
+//	return 0;
 
 
 
@@ -884,6 +892,46 @@ static int32_t shell_dump_host_mem(int32_t argc, char **argv)
 	return ret;
 }
 
+extern void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr);
+static int32_t shell_dump_viommu(int32_t argc, char **argv)
+{
+	uint64_t *hva;
+	int32_t ret;
+	uint32_t i, length, loop_cnt;
+	uint64_t op, dmar_index, did, addr; 
+	char temp_str[MAX_STR_SIZE];
+
+	pr_err("%s, argc:%d.", __func__, argc);
+	/* User input invalidation */
+	if (argc != 5) {
+		ret = -EINVAL;
+	} else	{
+
+		op = (uint32_t)strtol_deci(argv[1]);
+		dmar_index = (uint32_t)strtol_deci(argv[2]);
+		did = (uint32_t)strtol_deci(argv[3]);
+		addr  = (uint64_t *)strtoul_hex(argv[4]);
+		stac();
+		check_viommu_mapping(op, dmar_index, did, addr);
+		#if 0
+		//snprintf(temp_str, MAX_STR_SIZE, "Dump physical memory addr: 0x%016lx, length %d:\r\n", hva, length);
+		//shell_puts(temp_str);
+		/* Change the length to a multiple of 32 if the length is not */
+		loop_cnt = ((length & 0x1fU) == 0U) ? ((length >> 5U)) : ((length >> 5U) + 1U);
+		for (i = 0U; i < loop_cnt; i++) {
+			snprintf(temp_str, MAX_STR_SIZE, "HVA(0x%llx): 0x%016lx  0x%016lx  0x%016lx  0x%016lx\r\n",
+					hva, *hva, *(hva + 1UL), *(hva + 2UL), *(hva + 3UL));
+			hva += 4UL;
+			shell_puts(temp_str);
+		}
+		#endif
+		ret = 0;
+
+		clac();
+	}
+
+	return ret;
+}
 static void dump_guest_mem(void *data)
 {
 	uint64_t i, fault_addr;

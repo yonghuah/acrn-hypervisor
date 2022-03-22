@@ -508,6 +508,50 @@ void *pgtable_create_trusty_root(const struct pgtable *table,
 }
 
 
+const uint64_t *pgtable_lookup_entry_d(uint64_t *pml4_page, uint64_t addr, uint64_t *pg_size, const struct pgtable *table)
+{
+	const uint64_t *pret = NULL;
+	bool present = true;
+	uint64_t *pml4e, *pdpte, *pde, *pte;
+
+	pml4e = pml4e_offset(pml4_page, addr);
+	present = (table->pgentry_present(*pml4e) != 0UL);
+	
+	pr_err("%s, pml4e:%llx, present:%d.", __func__, *pml4e, present);
+
+	if (present) {
+		pdpte = pdpte_offset(pml4e, addr);
+		present = (table->pgentry_present(*pdpte) != 0UL);
+		pr_err("%s, pdpte:%llx, present:%d.", __func__, *pdpte, present);
+		if (present) {
+			if (pdpte_large(*pdpte) != 0UL) {
+				*pg_size = PDPTE_SIZE;
+				pret = pdpte;
+			} else {
+				pde = pde_offset(pdpte, addr);
+				present = (table->pgentry_present(*pde) != 0UL);
+				pr_err("%s, pde:%llx, present:%d.", __func__, *pde, present);
+				if (present) {
+					if (pde_large(*pde) != 0UL) {
+						*pg_size = PDE_SIZE;
+						pret = pde;
+					} else {
+						pte = pte_offset(pde, addr);
+						present = (table->pgentry_present(*pte) != 0UL);
+						pr_err("%s, pte:%llx, present:%d.", __func__, *pte, present);
+						if (present) {
+							*pg_size = PTE_SIZE;
+							pret = pte;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return pret;
+}
+
 /**
  * @pre (pml4_page != NULL) && (pg_size != NULL)
  */

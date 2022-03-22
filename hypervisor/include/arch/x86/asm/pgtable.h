@@ -324,6 +324,9 @@ void *pgtable_create_trusty_root(const struct pgtable *table,
 const uint64_t *pgtable_lookup_entry(uint64_t *pml4_page, uint64_t addr,
 		uint64_t *pg_size, const struct pgtable *table);
 
+const uint64_t *pgtable_lookup_entry_d(uint64_t *pml4_page, uint64_t addr,
+		uint64_t *pg_size, const struct pgtable *table);
+
 void pgtable_add_map(uint64_t *pml4_page, uint64_t paddr_base,
 		uint64_t vaddr_base, uint64_t size,
 		uint64_t prot, const struct pgtable *table);

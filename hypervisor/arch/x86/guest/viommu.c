@@ -611,6 +611,16 @@ uint64_t get_iova_mapping_block(struct acrn_viommu *vtd, uint64_t *guest_pml4,  
 	return map_hpa_base;
 }
 
+void check_mapping(uint64_t *pml4_page, uint64_t addr,
+		uint64_t *pg_size, const struct pgtable *table)
+{
+	uint64_t size;
+
+	pr_err("%s: pml4_page:%llx, addr:%llx", __func__, pml4_page, addr);
+	uint64_t *pte = pgtable_lookup_entry_d(pml4_page, addr,	&size, table);
+	pr_err("%s done: pte:llx", __func__, *pte);
+}
+
 int sync_shadow(struct acrn_viommu *vtd, uint64_t *guest_pml4, uint64_t *shadow_pml4, uint64_t addr, uint32_t nr_pages, uint32_t did)
 {
 	int status = 0;
@@ -623,7 +633,11 @@ int sync_shadow(struct acrn_viommu *vtd, uint64_t *guest_pml4, uint64_t *shadow_
 	uint64_t map_hpa_size;
 
 #if 0
-//	pr_err("%s enter..., guest pml4:%llx, shadow pml4:%llx, iova:%llx, iova_end:%llx.", __func__, guest_pml4, shadow_pml4, addr, iova_end);
+	pr_err("%s: DMAR%d, did:%d, guest pml4:%llx, shadow pml4:%llx, iova:%llx, iova_end:%llx, pages:%d.",
+		__func__, vtd->drhd_rt->index, did,  guest_pml4, shadow_pml4, addr, iova_end, nr_pages);
+#endif
+
+#if 0
 	guest_pte = pgtable_lookup_entry(guest_pml4, iova, &guest_size, &pgtable_ops);
 	if (guest_pte == NULL) {
 		//pr_err("Remove: iova:0x%llx, size:0x%lx, did:%d, loop:%d.\n", iova, shadow_size, prot, did, loop);
@@ -660,42 +674,49 @@ int sync_shadow(struct acrn_viommu *vtd, uint64_t *guest_pml4, uint64_t *shadow_
 		guest_size = 0;
 		shadow_size = 0;
 		guest_pte = pgtable_lookup_entry(guest_pml4, iova, &guest_size, &pgtable_ops);
-		shadow_pte = pgtable_lookup_entry(shadow_pml4, iova, &shadow_size, &pgtable_ops);
 		if (guest_pte == NULL) {
+			shadow_pte = pgtable_lookup_entry(shadow_pml4, iova, &shadow_size, &pgtable_ops);
 			if(shadow_pte != NULL) {
-				//present = false;
 				//unmap from guest i/o page table , hence to remove this mapping from shadow page table
-				//if (guest_size != shadow_size)
-				//	pr_err("%s, WARNING: size mismatch: guest size:%lld, shadow size:%lld.", __func__, guest_size, shadow_size);
-
-				//pr_err("Remove: iova:0x%llx, size:0x%lx, did:%d, loop:%d.\n", iova, shadow_size, prot, did, loop);
+				//pr_err("Remove: DMAR%d, did:%d, guest_pml4:%llx, shadow_pml4:%llx, iova:0x%llx, size:0x%lx, did:%d, loop:%d.\n",
+				//vtd->drhd_rt->index, did, guest_pml4, shadow_pml4, iova, shadow_size, prot, did, loop);
 
 				viommu_shadow_del_mr(vtd, shadow_pml4, iova, shadow_size);
 				req_size = shadow_size;
 				vtd->unmap_cnt[did]++;
 			} else {
+			#if 0
+				status = -1;
+				pr_err("Remove Err[NULL]: DMAR%d, did:%d, guest_pml4:%llx, shadow_pml4:%llx, iova:0x%llx, Nothing in Both, nr_pages:%d, loop:%d.",
+					vtd->drhd_rt->index, did, guest_pml4, shadow_pml4, iova, nr_pages, loop);
+				check_mapping(shadow_pml4, iova, &guest_size, &pgtable_ops);
+				//req_size = shadow_size;
+			#endif
 				break;
-				//pr_err("%s, WARNING [#NULL]: iova:0x%llx, Not present in either table, nr_pages:%d,  loop:%d.", __func__, iova, nr_pages, loop);
 			}
 		} else { /*mapping is present in guest.*/
-			if (shadow_pte == NULL) { //add mapping to shadow
+			//shadow_pte = pgtable_lookup_entry(shadow_pml4, iova, &shadow_size, &pgtable_ops);
+			//if (shadow_pte == NULL) { //add mapping to shadow
 				//map from guest i/o page table , hence to add this mapping to shadow page table
 				gpa = (((*guest_pte & (~EPT_PFN_HIGH_MASK)) & (~(guest_size - 1UL))) | (iova & (guest_size - 1UL)));
-				//uint64_t gpa2hpa(struct acrn_vm *vm, uint64_t gpa)
 				hpa = gpa2hpa(vtd->vm, gpa);
 				prot = EPT_RWX;
 
 				#if 0
-				pr_err("Add: hpa: 0x%llx iova: 0x%llx, gpa:0x%llx, size: 0x%lx prot: 0x%llx, did:%d,loop:%d.\n",
-					hpa, iova, gpa, guest_size, prot, did, loop);
+				pr_err("Add: DMAR%d, did:%d, guest_pml4:%llx, shadow_pml4:%llx, iova:%llx, hpa: 0x%llx, gpa:0x%llx, size: 0x%lx, loop:%d.",
+					vtd->drhd_rt->index, did, guest_pml4, shadow_pml4, iova, hpa, gpa, guest_size, loop);
 				#endif
 
 				viommu_shadow_add_mr(vtd, shadow_pml4, hpa, iova, guest_size, prot);
 				vtd->map_cnt[did]++;
 				req_size = guest_size;
+			#if 0
 			} else {
+				status = -1;
 				pr_err("%s, WARNING: mapping of iova:0x%llx, Present in both guest[%llx] and shadow[%llx], loop:%d.", __func__, iova, *guest_pte, *shadow_pte, loop);
+				break;
 			}
+			#endif
 
 		}
 		iova += req_size;
@@ -889,6 +910,7 @@ static uint64_t viommu_mmio_read(struct acrn_viommu *vdmar_unit, struct acrn_mmi
 
 	switch (offset) {
 	case DMAR_CAP_REG:
+	#if 0
 		pr_err("%s dmar%d cap: 0x%lx___", __func__, dmar_unit->index, dmar_unit->cap);
 		/* Caching mode: In order to force Linux not to flush write buffer (__mapping_notify_one()) */
 		value = (1UL << 7U);
@@ -900,6 +922,10 @@ static uint64_t viommu_mmio_read(struct acrn_viommu *vdmar_unit, struct acrn_mmi
 		value |= ((uint64_t)iommu_cap_max_amask_val(dmar_unit->cap) << 48U);
 		value |= ((uint64_t)iommu_cap_pgsel_inv(dmar_unit->cap) << 39U);	/* page Selective Invalidation */
 		value |= ((uint64_t)iommu_cap_super_page_val(dmar_unit->cap) << 34U); /* large page surpport */
+	#else
+		value = dmar_unit->cap;
+		value |= (1UL << 7U);
+	#endif
 		break;
 
 	case DMAR_ECAP_REG:
@@ -1136,4 +1162,46 @@ void list_shadow_table(void)
 		}
 
 	}
+}
+#define G_PG 0
+#define S_PG 1
+
+void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr)
+{
+	uint32_t i;
+	struct acrn_viommu *vtd;
+	uint64_t pml4, size;
+	uint64_t *pte;
+
+	pr_err("%s, op:%d, dmar_index:%d, did:%d, addr:0x%llx", __func__, op, dmar_index, did, addr);
+
+	for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
+
+		vtd = &vdmar_drhd_units[i];
+		if (dmar_index == vtd->drhd_rt->index)
+			break;
+	}
+
+	if (did >= MAX_GUEST_IOMMU_DID) {
+		pr_err("%s, invalid did:%d", __func__, did);
+		return;
+	}
+
+	if (op == G_PG) {
+		pml4 = vtd->guest_pml4_gpa[did];
+	} else if (op == S_PG){
+		pml4 = vtd->shadow_pml4[did];
+	} else { 
+		pr_err("%s, invalid op:%d", __func__, op);
+	}
+
+
+	if (pml4 == 0UL) {
+		pr_err("%s, pml4 is null, did:%d", __func__, did);
+		return 0;
+	}
+		
+
+	pte = pgtable_lookup_entry_d(pml4, addr, &size,  &pgtable_ops);
+	pr_err("DMAR%d, %sPageTable, mapping of %llx is %llx", dmar_index, op == 0? "Guest ": "Shadow ", addr, *pte); 
 }
