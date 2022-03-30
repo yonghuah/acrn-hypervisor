@@ -23,7 +23,7 @@ struct acrn_viommu {
 	uint32_t gcmd;
 #ifdef CONFIG_VIOMMU_ENABLED
 	uint64_t guest_root_tbl_addr;
-	uint8_t dmar_registers[4096];
+	uint8_t regs[4096];
 	struct pgtable shadow_pgtable;
 	uint64_t shadow_pml4[MAX_GUEST_IOMMU_DID];
 	uint64_t guest_pml4_gpa[MAX_GUEST_IOMMU_DID];

@@ -892,43 +892,24 @@ static int32_t shell_dump_host_mem(int32_t argc, char **argv)
 	return ret;
 }
 
-extern void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr);
+extern void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr, uint64_t nr_pages);
 static int32_t shell_dump_viommu(int32_t argc, char **argv)
 {
-	uint64_t *hva;
 	int32_t ret;
-	uint32_t i, length, loop_cnt;
-	uint64_t op, dmar_index, did, addr; 
-	char temp_str[MAX_STR_SIZE];
+	uint64_t op, dmar_index, did, addr, nr_pages; 
 
 	pr_err("%s, argc:%d.", __func__, argc);
 	/* User input invalidation */
-	if (argc != 5) {
-		ret = -EINVAL;
-	} else	{
 
-		op = (uint32_t)strtol_deci(argv[1]);
-		dmar_index = (uint32_t)strtol_deci(argv[2]);
-		did = (uint32_t)strtol_deci(argv[3]);
-		addr  = (uint64_t *)strtoul_hex(argv[4]);
-		stac();
-		check_viommu_mapping(op, dmar_index, did, addr);
-		#if 0
-		//snprintf(temp_str, MAX_STR_SIZE, "Dump physical memory addr: 0x%016lx, length %d:\r\n", hva, length);
-		//shell_puts(temp_str);
-		/* Change the length to a multiple of 32 if the length is not */
-		loop_cnt = ((length & 0x1fU) == 0U) ? ((length >> 5U)) : ((length >> 5U) + 1U);
-		for (i = 0U; i < loop_cnt; i++) {
-			snprintf(temp_str, MAX_STR_SIZE, "HVA(0x%llx): 0x%016lx  0x%016lx  0x%016lx  0x%016lx\r\n",
-					hva, *hva, *(hva + 1UL), *(hva + 2UL), *(hva + 3UL));
-			hva += 4UL;
-			shell_puts(temp_str);
-		}
-		#endif
-		ret = 0;
-
-		clac();
-	}
+	op = (uint32_t)strtol_deci(argv[1]);
+	dmar_index = (uint32_t)strtol_deci(argv[2]);
+	did = (uint32_t)strtol_deci(argv[3]);
+	addr  = (uint64_t *)strtoul_hex(argv[4]);
+	nr_pages = (uint32_t)strtol_deci(argv[5]);
+	stac();
+	check_viommu_mapping(op, dmar_index, did, addr, nr_pages);
+	ret = 0;
+	clac();
 
 	return ret;
 }
