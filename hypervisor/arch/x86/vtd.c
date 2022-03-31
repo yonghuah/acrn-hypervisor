@@ -413,6 +413,7 @@ static int32_t dmar_register_hrhd(struct dmar_drhd_rt *dmar_unit)
 	} else {
 		if ((iommu_ecap_c(dmar_unit->ecap) == 0U) && (!dmar_unit->drhd->ignore)) {
 			iommu_page_walk_coherent = false;
+			pr_err("%s, page_walk_coherent is not supported on DMAR%d.", __func__, dmar_unit->index);
 		}
 		dmar_disable_translation(dmar_unit);
 	}
@@ -816,8 +817,9 @@ static void fault_record_analysis( uint64_t low, uint64_t high)
 }
 
 int dbg_mapping = 1;
-extern void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr, uint64_t nr_pages);
-extern void check_viommu_mapping_one(struct dmar_drhd_rt *iommu, uint64_t addr, uint64_t nr_pages);
+extern void viommu_check_shadow_pgtable(int dmar_index);
+//extern void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr, uint64_t nr_pages);
+//extern void check_viommu_mapping_one(struct dmar_drhd_rt *iommu, uint64_t addr, uint64_t nr_pages);
 static void dmar_fault_handler(uint32_t irq, void *data)
 {
 	struct dmar_drhd_rt *dmar_unit = (struct dmar_drhd_rt *)data;
@@ -857,6 +859,7 @@ static void dmar_fault_handler(uint32_t irq, void *data)
 
 		fault_record_analysis(fault_record.lo_64, fault_record.hi_64);
 	//	check_viommu_mapping_one(dmar_unit, fault_record.lo_64,1);
+		viommu_check_shadow_pgtable(dmar_unit->index);
 
 		/* write to clear */
 		iommu_write64(dmar_unit, record_reg_offset, fault_record.lo_64);
