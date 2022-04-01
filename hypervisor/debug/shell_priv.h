@@ -60,7 +60,7 @@ struct shell {
 #define SHELL_CMD_DUMP_HOST_MEM_PARAM	"<addr, length>"
 #define SHELL_CMD_DUMP_HOST_MEM_HELP	"Dump host memory, starting at a given address(Hex), and for a given length (Dec in bytes)"
 
-#define SHELL_CMD_DUMP_VIOMMU		"pgcheck"
+#define SHELL_CMD_DUMP_VIOMMU		"iommu"
 #define SHELL_CMD_DUMP_VIOMMU_PARAM	"<op, dmar_idx, did, addr>"
 #define SHELL_CMD_DUMP_VIOMMU_HELP	"op->0: dump guest pgtabe, 1: dump shadow pgtable."
 

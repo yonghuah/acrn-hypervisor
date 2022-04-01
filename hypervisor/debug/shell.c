@@ -53,8 +53,6 @@ static int32_t shell_cpuid(int32_t argc, char **argv);
 static int32_t shell_reboot(int32_t argc, char **argv);
 static int32_t shell_rdmsr(int32_t argc, char **argv);
 static int32_t shell_wrmsr(int32_t argc, char **argv);
-extern void get_guest_map_unmap(void);
-extern void list_shadow_table(void);
 
 static struct shell_cmd shell_cmds[] = {
 	{
@@ -515,11 +513,6 @@ static int32_t shell_cmd_help(__unused int32_t argc, __unused char **argv)
 	char* help_str;
 
 	
-//	get_guest_map_unmap();
-//	return 0;
-
-
-
 	/* Print title */
 	shell_puts("\r\nRegistered Commands:\r\n\r\n");
 
@@ -589,8 +582,13 @@ static int32_t shell_cmd_help(__unused int32_t argc, __unused char **argv)
 
 static int32_t shell_version(__unused int32_t argc, __unused char **argv)
 {
-//	get_guest_map_unmap();
-	list_shadow_table();
+	char temp_str[MAX_STR_SIZE];
+
+	snprintf(temp_str, MAX_STR_SIZE, "HV %s-%s-%s %s (daily tag: %s) %s@%s build by %s%s\nAPI %u.%u\r\n",
+		HV_FULL_VERSION, HV_BUILD_TIME, HV_BUILD_VERSION, HV_BUILD_TYPE, HV_DAILY_TAG, HV_BUILD_SCENARIO,
+		HV_BUILD_BOARD, HV_BUILD_USER, HV_CONFIG_TOOL, HV_API_MAJOR_VERSION, HV_API_MINOR_VERSION);
+	shell_puts(temp_str);
+
 	return 0;
 }
 
@@ -892,22 +890,34 @@ static int32_t shell_dump_host_mem(int32_t argc, char **argv)
 	return ret;
 }
 
-extern void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr, uint64_t nr_pages);
+extern void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr, uint64_t nr_pages);
 static int32_t shell_dump_viommu(int32_t argc, char **argv)
 {
-	int32_t ret;
-	uint64_t op, dmar_index, did, addr, nr_pages; 
+	int32_t ret = 0;
+	uint64_t op, dmar_index = 0, did = 0, addr = 0, nr_pages = 0;
 
-	pr_err("%s, argc:%d.", __func__, argc);
+//	pr_err("%s, argc:%d.", __func__, argc);
+
 	/* User input invalidation */
-
+	if (argc < 2) {
+		pr_err("%s, invalid para.", __func__);
+		return;
+	}
 	op = (uint32_t)strtol_deci(argv[1]);
-	dmar_index = (uint32_t)strtol_deci(argv[2]);
-	did = (uint32_t)strtol_deci(argv[3]);
-	addr  = (uint64_t *)strtoul_hex(argv[4]);
-	nr_pages = (uint32_t)strtol_deci(argv[5]);
+	if (argc >= 3)
+		dmar_index = (uint32_t)strtol_deci(argv[2]);
+
+	if (argc >= 4)
+		did = (uint32_t)strtol_deci(argv[3]);
+
+	if (argc >= 5)
+		addr  = (uint64_t *)strtoul_hex(argv[4]);
+
+	if (argc >= 6)
+		nr_pages = (uint32_t)strtol_deci(argv[5]);
+
 	stac();
-	check_viommu_mapping(op, dmar_index, did, addr, nr_pages);
+	viommu_debug(op, dmar_index, did, addr, nr_pages);
 	ret = 0;
 	clac();
 

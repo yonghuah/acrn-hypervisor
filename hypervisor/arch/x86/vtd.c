@@ -858,8 +858,8 @@ static void dmar_fault_handler(uint32_t irq, void *data)
 			__func__, dmar_unit->index, index, record_reg_offset, fault_record.lo_64, fault_record.hi_64, loop);
 
 		fault_record_analysis(fault_record.lo_64, fault_record.hi_64);
-	//	check_viommu_mapping_one(dmar_unit, fault_record.lo_64,1);
-		viommu_check_shadow_pgtable(dmar_unit->index);
+		//check_viommu_mapping_one(dmar_unit, fault_record.lo_64,1);
+		//viommu_check_shadow_pgtable(dmar_unit->index);
 
 		/* write to clear */
 		iommu_write64(dmar_unit, record_reg_offset, fault_record.lo_64);

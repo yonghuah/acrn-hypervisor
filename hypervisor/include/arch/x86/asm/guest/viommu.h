@@ -9,6 +9,21 @@
 
 #define SHADOW_EN 1
 
+#define VTD_CAP_ESIRTPS (1UL << 62)
+#define VTD_CAP_FL5LP	(1UL << 60)
+#define VTD_CAP_PI		(1UL << 59)
+#define VTD_CAP_FL1GP	(1UL << 56)
+#define VTD_CAP_DRD		(1UL << 55)
+#define VTD_CAP_DWD		(1UL << 54)
+#define VTD_CAP_PSI		(1UL << 39)
+#define VTD_CAP_CM		(1UL << 7)
+#define VTD_CAP_AFL		(1UL << 3)
+
+#define VTD_ECAP_SC		(1UL << 7)
+#define VTD_ECAP_DT		(1UL << 2)
+#define VTD_ECAP_QI		(1UL << 1)
+#define VTD_ECAP_C		(1UL << 0)  /* Page Walk Coherent */
+
 #define MAX_GUEST_IOMMU_DID 128
 struct acrn_viommu {
 	spinlock_t lock;
