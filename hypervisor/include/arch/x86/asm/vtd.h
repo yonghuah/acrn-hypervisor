@@ -672,22 +672,22 @@ static inline uint64_t dmar_set_bitslice(uint64_t var, uint64_t mask, uint32_t p
 	return ((var & ~mask) | ((val << pos) & mask));
 }
 
-static uint32_t iommu_read32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
+static inline uint32_t iommu_read32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
 {
 	return mmio_read32(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
 }
 
-static uint64_t iommu_read64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
+static inline uint64_t iommu_read64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
 {
 	return mmio_read64(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
 }
 
-static void iommu_write32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint32_t value)
+static inline void iommu_write32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint32_t value)
 {
 	mmio_write32(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
 }
 
-static void iommu_write64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint64_t value)
+static inline void iommu_write64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint64_t value)
 {
 	mmio_write64(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
 }
