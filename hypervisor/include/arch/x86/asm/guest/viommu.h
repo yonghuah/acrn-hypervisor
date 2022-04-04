@@ -35,9 +35,7 @@ struct acrn_viommu {
 	uint16_t qi_head;
 	uint16_t qi_tail;
 
-	uint32_t gcmd;
 #ifdef CONFIG_VIOMMU_ENABLED
-	uint64_t guest_root_tbl_addr;
 	uint8_t regs[4096];
 	struct pgtable shadow_pgtable;
 	uint64_t shadow_pml4[MAX_GUEST_IOMMU_DID];

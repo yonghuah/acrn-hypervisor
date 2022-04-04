@@ -104,6 +104,11 @@
 #define IOTLB_INV_UPPER_ADDR_POS	12U
 #define IOTLB_INV_UPPER_ADDR_MASK	(0xFFFFFFFFFFFFFUL << IOTLB_INV_UPPER_ADDR_POS)
 
+#define RTA_TTM(rta)			((rta >> 10) & 0x3)
+#define TTM_LEGACY_MODE			0U
+#define TTM_SCALABLE_MODE		1U
+#define TTM_DMA_ABORT_MODE		3U
+
 /* Make sure all PT IRQs work w/ interrupt remapping or post interrupt */
 #if (CONFIG_MAX_PT_IRQ_ENTRIES <= 256)
 #define MAX_IR_ENTRIES 256
