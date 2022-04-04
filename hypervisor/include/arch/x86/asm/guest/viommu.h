@@ -9,10 +9,10 @@
 
 #define SHADOW_EN 1
 
-#define VTD_CAP_ESIRTPS (1UL << 62)
-#define VTD_CAP_FL5LP	(1UL << 60)
+#define VTD_CAP_ESIRTPS		(1UL << 62)
+#define VTD_CAP_FL5LP		(1UL << 60)
 #define VTD_CAP_PI		(1UL << 59)
-#define VTD_CAP_FL1GP	(1UL << 56)
+#define VTD_CAP_FL1GP		(1UL << 56)
 #define VTD_CAP_DRD		(1UL << 55)
 #define VTD_CAP_DWD		(1UL << 54)
 #define VTD_CAP_PSI		(1UL << 39)
@@ -24,6 +24,11 @@
 #define VTD_ECAP_QI		(1UL << 1)
 #define VTD_ECAP_C		(1UL << 0)  /* Page Walk Coherent */
 
+#define IQ_QUEUE_QS_MASK	(0x7)
+#define IQ_QUEUE_DW(iqa)	(((iqa) >> 11U) & 1UL)
+#define IQ_INV_DESC_SIZE(dw)	((dw) ? 32U : 16U )
+#define IQ_IQT_MASK(dw)		((dw) ? 0x3FFE0 : 0x7FFF0)
+
 #define MAX_GUEST_IOMMU_DID 128
 struct acrn_viommu {
 	spinlock_t lock;
@@ -32,8 +37,8 @@ struct acrn_viommu {
 	struct dmar_drhd_rt *drhd_rt;
 
 	uint64_t qi_queue;
-	uint16_t qi_head;
-	uint16_t qi_tail;
+	uint32_t qi_queue_size;
+	uint32_t qi_dw;
 
 #ifdef CONFIG_VIOMMU_ENABLED
 	uint8_t regs[4096];

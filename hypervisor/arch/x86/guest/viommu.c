@@ -1225,33 +1225,35 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 	return write_iqt;
 }
 
-static void handle_iqt_write(struct acrn_viommu *vdmar_unit, uint16_t tail)
+static void handle_iqt_write(struct acrn_viommu *viommu, uint16_t tail)
 {
-	struct dmar_drhd_rt *dmar_unit = vdmar_unit->drhd_rt;
-	uint16_t head = vdmar_unit->qi_tail;	/* last tail from last write to iqt */
-	struct dmar_entry *entry;
 	bool write_iqt;
+	uint64_t head;
+	uint32_t *status_ptr;
+	struct dmar_entry *entry;
+	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
 
+	head = viommu_read64(viommu, DMAR_IQT_REG) & IQ_IQT_MASK(viommu->qi_dw);
 	stac();
 	while (head != tail) {
 		write_iqt = false;
-		entry = (struct dmar_entry *)(vdmar_unit->qi_queue + head);
+		entry = (struct dmar_entry *)(viommu->qi_queue + head);
 
 		switch (entry->lo_64 & DMAR_INV_DESC_MASK) {
 		case DMAR_INV_CONTEXT_CACHE_DESC:
-			process_context_cache_desc(vdmar_unit, entry);
+			process_context_cache_desc(viommu, entry);
 			write_iqt = true; 
 			break;
 
 		case DMAR_INV_IOTLB_DESC:
-			write_iqt = process_iotlb_desc(vdmar_unit, entry);
+			write_iqt = process_iotlb_desc(viommu, entry);
 			break;
 
 		case DMAR_INV_WAIT_DESC:
 		{
 			if (dmar_issue_qi_complete(dmar_unit)) {
-				/* set the Done status in the wait entry */
-				uint32_t *status_ptr = (uint32_t *)gpa2hva(vdmar_unit->vm, entry->hi_64);
+				/* set the Done Status in the wait entry */
+				status_ptr = (uint32_t *)gpa2hva(viommu->vm, entry->hi_64);
 				*status_ptr = (uint32_t)(entry->lo_64 >> 32U);
 			}
 
@@ -1268,7 +1270,7 @@ static void handle_iqt_write(struct acrn_viommu *vdmar_unit, uint16_t tail)
 			dmar_issue_qi_request(dmar_unit, *entry);
 		}
 
-		head = (head + DMAR_QI_INV_ENTRY_SIZE) % DMAR_INVALIDATION_QUEUE_SIZE;
+		head = (head + IQ_INV_DESC_SIZE(viommu->qi_dw)) % viommu->qi_queue_size;
 	}
 	clac();
 }
@@ -1375,18 +1377,18 @@ static uint64_t viommu_mmio_read(struct acrn_viommu *viommu, struct acrn_mmio_re
 		break;
 
 	case DMAR_IQT_REG:
-		//val2 = viommu_read64(viommu, DMAR_IQT_REG);
-		value = viommu->qi_tail;
+		value = viommu_read64(viommu, DMAR_IQT_REG);
+		pr_err("%s, DMAR%d,  tail:%lx", __func__, index, value);
 		break;
 
 	case DMAR_IQH_REG:
-		//val2 = viommu_read64(viommu, DMAR_IQH_REG);
-		value = viommu->qi_head;
+		value = viommu_read64(viommu, DMAR_IQH_REG);
+		pr_err("%s, DMAR%d,  head:%lx", __func__, index, value);
 		break;
 
 	case DMAR_IQA_REG:
-		//val2 = viommu_read64(viommu, DMAR_IQA_REG);
-		value = viommu->qi_queue;
+		value = viommu_read64(viommu, DMAR_IQA_REG);
+		pr_err("%s, DMAR%d,  IQA:%llx", __func__, index, value);
 		break;
 
 	default:
@@ -1415,6 +1417,7 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 	bool write_reg = true;
 	static int cnt;
 	uint32_t v_gsts;
+	uint64_t iq_addr;
 
 	if (offset + mmio->size > MAX_DMAR_REG_SPACE) {
 		pr_err("%s, DMAR%d offset: 0x%x, size: %d overflow.", __func__, index, offset, mmio->size);
@@ -1433,8 +1436,8 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 		v_gsts = viommu_read32(viommu, DMAR_GSTS_REG);
 		if (v_gsts & DMA_GSTS_QIES) {
 			handle_iqt_write(viommu, mmio->value);
-			viommu->qi_tail = (uint16_t)mmio->value;
-			viommu->qi_head = viommu->qi_tail;
+
+			/* update guest IQT & IQH */
 			viommu_write64(viommu, DMAR_IQT_REG, mmio->value);
 			viommu_write64(viommu, DMAR_IQH_REG, mmio->value);
 		} else {
@@ -1445,10 +1448,13 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 		break;
 
 	case DMAR_IQA_REG:
-		viommu->qi_queue = (uint64_t)gpa2hva(viommu->vm, mmio->value);
-		viommu->qi_head = 0U;
-		viommu->qi_tail = 0U;
-		viommu_write64(viommu, DMAR_IQA_REG, mmio->value);
+		iq_addr = mmio->value;
+		viommu_write64(viommu, DMAR_IQA_REG, iq_addr);
+
+		viommu->qi_queue = (uint64_t)gpa2hva(viommu->vm, iq_addr);
+		viommu->qi_dw= IQ_QUEUE_DW(iq_addr);
+		viommu->qi_queue_size = (PAGE_SIZE) << (iq_addr & IQ_QUEUE_QS_MASK);
+		pr_err("%s, DMAR%d, IQA:%llx, DW:%llx, QS:%llx.", __func__, index, iq_addr, viommu->qi_dw, viommu->qi_queue_size);
 		viommu_write64(viommu, DMAR_IQH_REG, 0UL);
 		viommu_write64(viommu, DMAR_IQT_REG, 0UL);
 
@@ -1522,7 +1528,7 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 
 	/* Version */
 	viommu_write32(viommu, DMAR_VER_REG, iommu_read32(dmar_unit, DMAR_VER_REG));
-	pr_err("%s, DMAR%d: VT-d VER:%lx (Major:bit7~4, Minor:bit3~0)",
+	pr_err("%s, DMAR%d: VT-d VER:%lx (Maj:bit7~4, Min:bit3~0)",
 		__func__, index, viommu_read64(viommu, DMAR_VER_REG));
 
 	/* Capability */
