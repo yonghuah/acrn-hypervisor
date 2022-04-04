@@ -75,16 +75,6 @@ static inline uint64_t io_pgentry_present(uint64_t pte)
 {
 	return pte & EPT_RWX;
 }
-#if 0
-void flush_cache_range1(const volatile void *p, uint64_t size)
-{
-	uint64_t i;
-
-	for (i = 0UL; i < size; i += CACHE_LINE_SIZE) {
-		clflushopt(p + i);
-	}
-}
-#endif
 static inline uint64_t shadow_pgentry_present(uint64_t pte)
 {
 	return pte & EPT_RWX;
@@ -93,8 +83,6 @@ static inline uint64_t shadow_pgentry_present(uint64_t pte)
 static inline void shadow_clflush_pagewalk(const void* etry)
 {
 	iommu_flush_cache(etry, sizeof(uint64_t));
-//	flush_cache_range1(etry, sizeof(uint64_t));
-//	wbinvd();
 }
 
 static inline bool shadow_large_page_support(enum _page_table_level level, __unused uint64_t prot)
@@ -498,7 +486,7 @@ static int context_cache_inv_device(struct acrn_viommu *vtd, uint32_t did, uint3
 	uint16_t i, j, ctx_cnt = 0;
 	struct dmar_entry *guest_root_e;
 	union pci_bdf vbdf;
-	struct dmar_entry *p_guest_context_e, *p_shadow_context_e, dummy_ctx_e;
+	struct dmar_entry *p_guest_context_e, *p_shadow_context_e;
 
 	bus = (sid >> 8) & 0xFF;
 	devfun = sid & 0xFF;
@@ -567,15 +555,7 @@ static int context_cache_inv_device(struct acrn_viommu *vtd, uint32_t did, uint3
 			vbdf.fields.devfun = devfun;
 			p_shadow_context_e = get_shadow_context_entry(vtd, &vbdf);
 			if (p_shadow_context_e != NULL) {
-				/* overwrite native context entry */
-				#if 0//(SHADOW_EN == 0) //debug only
-				//#error "No shadow!"
-				memcpy_s(&dummy_ctx_e, sizeof(struct dmar_entry), p_shadow_context_e, sizeof(struct dmar_entry));
-				p_shadow_context_e = &dummy_ctx_e;
-				//dump_context_entry("Navtive CTX", vbdf.bits.b, vbdf.bits.d, vbdf.bits.f, p_shadow_context_e);
-				//dump_context_entry("Guest   CTX", i, (j >> 3) & 0x1f, j & 0x7, p_guest_context_e);
-				#endif
-
+				/* update native context entry */
 				p_shadow_context_e->lo_64 = p_guest_context_e->lo_64;
 				p_shadow_context_e->lo_64 &= (~CTX_ENTRY_LOWER_SLPTPTR_MASK);
 				#if 1 //use shadow page table
@@ -588,8 +568,9 @@ static int context_cache_inv_device(struct acrn_viommu *vtd, uint32_t did, uint3
 				p_shadow_context_e->hi_64 = p_guest_context_e->hi_64;
 				p_shadow_context_e->hi_64 &= (~CTX_ENTRY_UPPER_DID_MASK);
 				p_shadow_context_e->hi_64 |= ((remapped_did << CTX_ENTRY_UPPER_DID_POS) & CTX_ENTRY_UPPER_DID_MASK);
+
+				iommu_flush_cache(p_shadow_context_e, sizeof(struct dmar_entry));
 				//dump_context_entry("Shadow  CTX", vbdf.bits.b, vbdf.bits.d, vbdf.bits.f, p_shadow_context_e);
-				//pr_err("\n");
 			} else {
 				pr_err("%s, fail to get native context entry, vBDF= [%x:%x:%x]", __func__, vbdf.bits.b, vbdf.bits.d, vbdf.bits.f);
 				status = -1;
@@ -1397,7 +1378,7 @@ static uint64_t viommu_mmio_read(struct acrn_viommu *viommu, struct acrn_mmio_re
 		} else {
 			value = iommu_read64(dmar_unit, offset);
 		}
-		//pr_err("%s, DMAR%d, Read from native: offset:0x%x, host value:0x%llx", __func__, index, offset, value);
+		pr_err("%s, DMAR%d, Read from native: offset:0x%x, host value:0x%llx", __func__, index, offset, value);
 	}
 
 	spinlock_release(&viommu->lock);
@@ -1414,8 +1395,7 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
 	uint32_t offset = mmio->address - dmar_unit->drhd->reg_base_addr;
 	int index = dmar_unit->index;
-	bool write_reg = true;
-	static int cnt;
+	bool write_reg = false;
 	uint32_t v_gsts;
 	uint64_t iq_addr;
 
@@ -1425,13 +1405,38 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 	}
 
 	//if (offset != DMAR_IQT_REG) {
-	if (cnt < 200) {
-		//pr_err("%s --> DMAR%d offset: 0x%x, size: %d,  value: 0x%llx", __func__, index, offset, mmio->size, mmio->value);
-	}
+	//pr_err("%s --> DMAR%d offset: 0x%x, size: %d,  value: 0x%llx", __func__, index, offset, mmio->size, mmio->value);
+	//}
 
 	spinlock_obtain(&viommu->lock);
 
 	switch (offset) {
+	case DMAR_GCMD_REG:
+		viommu_write32(viommu, offset, (uint32_t)mmio->value);
+		handle_gcmd(viommu);
+		write_reg = false;
+		break;
+
+	case DMAR_RTADDR_REG:
+		viommu_write64(viommu, offset, mmio->value);
+		write_reg = false;
+		break;
+
+	case DMAR_FECTL_REG:
+	case DMAR_FEDATA_REG:
+	case DMAR_FEADDR_REG:
+	case DMAR_FEUADDR_REG:
+		viommu_write32(viommu, offset, (uint32_t)mmio->value);
+		/* Hypervisor owns the fault management */
+		write_reg = false;
+		break;
+#if 0
+	case DMAR_PMEN_REG: /* Protected Memory Enable */
+		viommu_write32(viommu, offset, (uint32_t)mmio->value);
+		write_reg = false;
+		break;
+#endif
+
 	case DMAR_IQT_REG:
 		v_gsts = viommu_read32(viommu, DMAR_GSTS_REG);
 		if (v_gsts & DMA_GSTS_QIES) {
@@ -1462,35 +1467,13 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 		write_reg = false;
 		break;
 
-	case DMAR_GCMD_REG:
-		viommu_write32(viommu, offset, (uint32_t)mmio->value);
-		handle_gcmd(viommu);
-		write_reg = false;
-		break;
-
-	case DMAR_FECTL_REG:
-	case DMAR_FEDATA_REG:
-	case DMAR_FEADDR_REG:
-	case DMAR_FEUADDR_REG:
-		viommu_write32(viommu, offset, (uint32_t)mmio->value);
-		/* Hypervisor owns the fault management */
-		write_reg = false;
-		break;
-
-	case DMAR_RTADDR_REG:
-		viommu_write64(viommu, offset, mmio->value);
-		write_reg = false;
-		break;
-
 	default:
-	if (cnt < 200)
-		//pr_err("%s, DMAR%d,  Unhandled Write offset:0x%x, value:0x%llx", __func__, index, offset, mmio->value);
+		pr_err("%s, DMAR%d,  Unhandled Write offset:0x%x, value:0x%llx", __func__, index, offset, mmio->value);
 		break;
 	}
 
 	if (write_reg) {
-		if (cnt < 200)
-			//pr_err("%s, DMAR%d,  Write-thru offset:0x%x, value:0x%llx", __func__, index, offset, mmio->value);
+		pr_err("%s, DMAR%d,  WARNING: Write-thru offset:0x%x, value:0x%llx", __func__, index, offset, mmio->value);
 		if (mmio->size == 4U) {
 			iommu_write32(dmar_unit, offset, (uint32_t)mmio->value);
 		} else {
@@ -1499,8 +1482,6 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 	}
 
 	spinlock_release(&viommu->lock);
-
-	cnt++;
 exit:
 	return;
 }
@@ -1533,9 +1514,8 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 
 	/* Capability */
 	val64 = dmar_unit->cap;
-	val64 &= (~(VTD_CAP_ESIRTPS | VTD_CAP_FL5LP | VTD_CAP_PI | VTD_CAP_FL1GP | VTD_CAP_AFL)); /* Always clear bits. */
+	val64 &= (~(VTD_CAP_ESIRTPS | VTD_CAP_FL5LP | VTD_CAP_PI | VTD_CAP_FL1GP | VTD_CAP_PHMR | VTD_CAP_PLMR | VTD_CAP_AFL)); /* Always clear bits. */
 	val64 |= (VTD_CAP_PSI | VTD_CAP_CM); /* Always set capability bits */
-	//val64 |= (VTD_CAP_CM); /* Always set capability bits */
 	viommu_write64(viommu, DMAR_CAP_REG, val64);
 	pr_err("%s, DMAR%d: Host cap: %-16llx Guest cap: %-16llx", __func__,
 		index, dmar_unit->cap, viommu_read64(viommu, DMAR_CAP_REG));

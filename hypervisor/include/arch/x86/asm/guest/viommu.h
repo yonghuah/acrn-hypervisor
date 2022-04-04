@@ -17,6 +17,9 @@
 #define VTD_CAP_DWD		(1UL << 54)
 #define VTD_CAP_PSI		(1UL << 39)
 #define VTD_CAP_CM		(1UL << 7)
+#define VTD_CAP_PHMR		(1UL << 6)
+#define VTD_CAP_PLMR		(1UL << 5)
+#define VTD_CAP_RWBF		(1UL << 4)
 #define VTD_CAP_AFL		(1UL << 3)
 
 #define VTD_ECAP_SC		(1UL << 7)
