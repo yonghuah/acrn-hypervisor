@@ -351,54 +351,6 @@ void viommu_shadow_del_mr(struct acrn_viommu *vdmar, uint64_t *pml4_page, uint64
 	//ept_flush_guest(vm);
 }
 
-static void dump_root_entry(char *str, int bus, struct dmar_entry * p_root_e)
-{
-	pr_err("%s: root entry[bus = %d], conext pointer:%llx.", str, bus, p_root_e->lo_64);
-}
-
-static int dump_context_entry(char *str, uint32_t bus, uint32_t dev, uint32_t fun, struct dmar_entry * p_context_e)
-{
-	uint64_t fpd, tt, slptptr, aw, did, P;
-
-	P = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_P_MASK, CTX_ENTRY_LOWER_P_POS);
-	tt = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_TT_MASK, CTX_ENTRY_LOWER_TT_POS);
-	fpd = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_FPD_MASK, CTX_ENTRY_LOWER_FPD_POS);
-	slptptr = p_context_e->lo_64 & CTX_ENTRY_LOWER_SLPTPTR_MASK;
-	aw = GET_BITS(p_context_e->hi_64, CTX_ENTRY_UPPER_AW_MASK, CTX_ENTRY_UPPER_AW_POS);
-	did = GET_BITS(p_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
-
-	pr_err("%s: BDF [%lx:%2lx:%lx]: DID:%3d, TT:%llx, AW:%llx, FPD:%llx, P:%d, SL-PTPTR: 0x%llx.", str, bus, dev, fun, did, tt, aw, fpd, P, slptptr);
-	return 0;
-}
-
-int dump_root_table(uint64_t rta, int dmar_index)
-{
-	uint16_t did;
-	int i, j, ctx_cnt = 0;
-	struct dmar_entry *root_entry, *ctp;
-	static uint32_t bitmap;
-
-	pr_err("%s, DMAR%d: RTA: 0x%llx", __func__, dmar_index, rta);
-	root_entry = (struct dmar_entry *)(rta & PAGE_MASK);
-	for (i = 0; i < 3; i++) { //bus
-		if (root_entry[i].lo_64 & 1) {
-			dump_root_entry("dmup-root-e", i, &root_entry[i]);
-			ctp = (struct dmar_entry *)(root_entry[i].lo_64 & PAGE_MASK);
-			for (j = 0; j < 256; j++) {//df
-				if (ctp[j].lo_64 & 1) {
-					ctx_cnt++;
-					if (dump_context_entry("dump-CTX-e", i, (j >> 3) & 0x1f, j & 0x7, &ctp[j]))
-						return -1;
-				}
-			}
-		}
-	}
-
-	bitmap |= (1 << dmar_index);
-	pr_err("DMAR%d: Dump %d Context Entries.\n", dmar_index, ctx_cnt);
-	return 0;
-}
-
 void *viommu_get_guest_pml4(struct acrn_viommu *vtd, uint16_t did)
 {
 	return (void *) (vtd->guest_pml4_gpa[did]);
@@ -947,7 +899,6 @@ int sync_shadow(struct acrn_viommu *vtd, uint64_t *guest_pml4, uint64_t *shadow_
 }
 #endif
 
-
 int viommu_shadow_table_psi_sync(struct acrn_viommu *viommu, uint32_t did, uint64_t addr, uint64_t size)
 {
 	int status = 0;
@@ -1045,7 +996,6 @@ static int iotlb_inv_domain(struct acrn_viommu *viommu, uint32_t did)
 	
 	return 0;	
 }
-
 
 static int iotlb_inv_global(struct acrn_viommu *viommu)
 {
@@ -1559,8 +1509,55 @@ void init_viommu(struct acrn_vm *vm)
 	}
 }
 
-
 /*All below are debug code */
+static void dump_root_entry(char *str, int bus, struct dmar_entry * p_root_e)
+{
+	pr_err("%s: root entry[bus = %d], conext pointer:%llx.", str, bus, p_root_e->lo_64);
+}
+
+static int dump_context_entry(char *str, uint32_t bus, uint32_t dev, uint32_t fun, struct dmar_entry * p_context_e)
+{
+	uint64_t fpd, tt, slptptr, aw, did, P;
+
+	P = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_P_MASK, CTX_ENTRY_LOWER_P_POS);
+	tt = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_TT_MASK, CTX_ENTRY_LOWER_TT_POS);
+	fpd = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_FPD_MASK, CTX_ENTRY_LOWER_FPD_POS);
+	slptptr = p_context_e->lo_64 & CTX_ENTRY_LOWER_SLPTPTR_MASK;
+	aw = GET_BITS(p_context_e->hi_64, CTX_ENTRY_UPPER_AW_MASK, CTX_ENTRY_UPPER_AW_POS);
+	did = GET_BITS(p_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
+
+	pr_err("%s: BDF [%lx:%2lx:%lx]: DID:%3d, TT:%llx, AW:%llx, FPD:%llx, P:%d, SL-PTPTR: 0x%llx.", str, bus, dev, fun, did, tt, aw, fpd, P, slptptr);
+	return 0;
+}
+
+int dump_root_table(uint64_t rta, int dmar_index)
+{
+	uint16_t did;
+	int i, j, ctx_cnt = 0;
+	struct dmar_entry *root_entry, *ctp;
+	static uint32_t bitmap;
+
+	pr_err("%s, DMAR%d: RTA: 0x%llx", __func__, dmar_index, rta);
+	root_entry = (struct dmar_entry *)(rta & PAGE_MASK);
+	for (i = 0; i < 3; i++) { //bus
+		if (root_entry[i].lo_64 & 1) {
+			dump_root_entry("dmup-root-e", i, &root_entry[i]);
+			ctp = (struct dmar_entry *)(root_entry[i].lo_64 & PAGE_MASK);
+			for (j = 0; j < 256; j++) {//df
+				if (ctp[j].lo_64 & 1) {
+					ctx_cnt++;
+					if (dump_context_entry("dump-CTX-e", i, (j >> 3) & 0x1f, j & 0x7, &ctp[j]))
+						return -1;
+				}
+			}
+		}
+	}
+
+	bitmap |= (1 << dmar_index);
+	pr_err("DMAR%d: Dump %d Context Entries.\n", dmar_index, ctx_cnt);
+	return 0;
+}
+
 static uint64_t nr_mapping_miss;
 void shadow_mapping_verify(struct acrn_viommu *viommu, uint16_t did, uint64_t addr, uint64_t *pge, uint64_t size)
 {
@@ -1626,7 +1623,7 @@ struct sanity_chk_domain {
 	uint64_t hit_cnt;
 	uint64_t miss_cnt;
 };
-
+static bool sanitty_chk_print;
 struct sanity_chk_viommu {
 	struct sanity_chk_domain dom[128];
 };
@@ -1643,7 +1640,8 @@ void validate_guest_mapping(struct acrn_viommu *viommu, uint16_t did, uint64_t a
 	hpa = gpa2hpa(vm, gpa);
 	if (hpa == INVALID_HPA) {
 		dom->miss_cnt++;
-		//pr_err("Invalid HPA for guest mapping: DMAR%d, did:%d, iova:%llx, gpa:%llx,  pte:%llx", index, did, addr, gpa, *pte);
+		if (sanitty_chk_print)
+			pr_err("Invalid HPA for guest mapping: DMAR%d, did:%d, iova:%llx, gpa:%llx,  pte:%llx", index, did, addr, gpa, *pte);
 	} else {
 		dom->hit_cnt++;
 	}
@@ -1733,7 +1731,7 @@ void sanity_check_guest_pgtable(void)
 #define DUMP_HOST_CONTEXT_TBL		4 /* op only */
 #define MAP_UNMAP_CNT			5 /* op only */
 #define READ_HOST_IOMMU_REG		7 /* op, dmar_index, did = 0, offset = addr, size = nr_pages*/
-#define SANITY_CHECK_GUEST_MAPPING 	8 /* op only*/
+#define SANITY_CHECK_GUEST_MAPPING 	8 /* op  print = (dmar_index != 0UL)*/
 void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr, uint64_t nr_pages)
 {
 	uint32_t i, j, loop = 0;
@@ -1864,6 +1862,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 	}
 
 	if (op == SANITY_CHECK_GUEST_MAPPING) {
+		sanitty_chk_print = (dmar_index != 0);
 		sanity_check_guest_pgtable();
 		return;
 	}
