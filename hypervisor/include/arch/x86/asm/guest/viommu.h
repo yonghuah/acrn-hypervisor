@@ -27,10 +27,20 @@
 #define VTD_ECAP_QI		(1UL << 1)
 #define VTD_ECAP_C		(1UL << 0)  /* Page Walk Coherent */
 
+#define VTD_CAP_FRO_POS		(24U)
+#define VTD_CAP_FRO_MASK	(0x3FFUL << VTD_CAP_FRO_POS)
+
+#define VTD_CAP_NFR_POS		(40U)
+#define VTD_CAP_NFR_MASK	(0xFFUL << VTD_CAP_NFR_POS)
+
 #define IQ_QUEUE_QS_MASK	(0x7)
 #define IQ_QUEUE_DW(iqa)	(((iqa) >> 11U) & 1UL)
 #define IQ_INV_DESC_SIZE(dw)	((dw) ? 32U : 16U )
 #define IQ_IQT_MASK(dw)		((dw) ? 0x3FFE0 : 0x7FFF0)
+
+/* Nuber of Fault Record Registers */
+#define VTD_FCRD_REG_NR		(1UL)
+
 
 #define MAX_GUEST_IOMMU_DID 128
 struct acrn_viommu {
@@ -42,6 +52,8 @@ struct acrn_viommu {
 	uint64_t qi_queue;
 	uint32_t qi_queue_size;
 	uint32_t qi_dw;
+	uint32_t frcd_index;
+	uint32_t frcd_offset;
 
 #ifdef CONFIG_VIOMMU_ENABLED
 	uint8_t regs[4096];

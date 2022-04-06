@@ -48,6 +48,7 @@ typedef void (*shadow_pge_sync_handler)(struct acrn_viommu *viommu, uint16_t did
 static struct acrn_viommu vdmar_drhd_units[MAX_DRHDS] = {0};
 
 #define GET_BITS  dmar_get_bitslice
+#define SET_BITS  dmar_set_bitslice
 
 static uint32_t viommu_read32(const struct acrn_viommu *viommu, uint32_t offset)
 {
@@ -1156,6 +1157,47 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 	return write_iqt;
 }
 
+int handle_fsts_write(struct acrn_viommu *viommu, uint32_t fsts)
+{
+	//pr_err("%s, DMAR%d, value:%llx", __func__, viommu->drhd_rt->index, fsts);
+	return 0;
+}
+
+#define VTD_FECTL_IM_MASK (1U << 31)
+#define VTD_FECTL_IP_MASK (1U << 30)
+int handle_fectl_write(struct acrn_viommu *viommu, uint32_t req_fectl)
+{
+	uint32_t fectl = viommu_read32(viommu, DMAR_FECTL_REG);
+	uint32_t req_bits = req_fectl ^ fectl;
+
+	//only IM(bit31) can be set.
+	if ((req_bits & VTD_FECTL_IM_MASK) != 0U) {
+		/* handle possible pending interrupt.*/
+		if (req_fectl & VTD_FECTL_IM_MASK) {
+			/*Set IM*/
+		} else {
+			/*Clear  IM*/
+		}
+		fectl &= (~VTD_FECTL_IM_MASK);
+		fectl |= (req_fectl & VTD_FECTL_IM_MASK);
+		viommu_write32(viommu, DMAR_FECTL_REG, fectl);
+	}
+	//pr_err("%s, DMAR%d, value:%llx", __func__, viommu->drhd_rt->index, fectl);
+	return 0;
+}
+
+void generate_dmar_interrupt(struct acrn_viommu *viommu, uint32_t msi_addr_reg, uint32_t msi_data_reg)
+{
+	/*Read addr & data from registers*/
+
+	/* Inject MSI interrupt to guest with message addr & data */
+}
+
+int report_fault(struct acrn_viommu *viommu, uint32_t reason)
+{
+	return 0;
+}
+
 static void handle_iqt_write(struct acrn_viommu *viommu, uint16_t tail)
 {
 	bool write_iqt;
@@ -1182,6 +1224,10 @@ static void handle_iqt_write(struct acrn_viommu *viommu, uint16_t tail)
 
 		case DMAR_INV_WAIT_DESC:
 		{
+			if (entry->lo_64 & (1 << 4)) {
+				pr_err("%s, IF is set in WAIT Desc...", __func__);
+			}
+
 			if (dmar_issue_qi_complete(dmar_unit)) {
 				/* set the Done Status in the wait entry */
 				status_ptr = (uint32_t *)gpa2hva(viommu->vm, entry->hi_64);
@@ -1291,35 +1337,44 @@ static uint64_t viommu_mmio_read(struct acrn_viommu *viommu, struct acrn_mmio_re
 
 	switch (offset) {
 	case DMAR_VER_REG:
-		value = viommu_read64(viommu, DMAR_VER_REG); /*todo: move to default case */
+		value = viommu_read64(viommu, offset); /*todo: move to default case */
 		break;
 
 	case DMAR_CAP_REG: /*todo: move to default case */
-		value = viommu_read64(viommu, DMAR_CAP_REG);
+		value = viommu_read64(viommu, offset);
 		break;
 
 	case DMAR_ECAP_REG:
-		value = viommu_read64(viommu, DMAR_ECAP_REG); /*todo: move to default case */
+		value = viommu_read64(viommu, offset); /*todo: move to default case */
 		break;
 
 	case DMAR_GSTS_REG:
-		value = viommu_read32(viommu, DMAR_GSTS_REG); /*todo: move to default case */
+		value = viommu_read32(viommu, offset); /*todo: move to default case */
 		//pr_err("%s,DMAR%d,  GSTS:%llx", __func__, index, value);
+		break;
+	case DMAR_FSTS_REG:
+		value = viommu_read32(viommu, offset);
+		//pr_err("%s,DMAR%d,  FSTS:%llx", __func__, index, value);
+		break;
+
+	case DMAR_FECTL_REG:
+		value = viommu_read32(viommu, offset);
+		//pr_err("%s,DMAR%d,  FECTL:%llx", __func__, index, value);
 		break;
 
 	case DMAR_IQT_REG:
 		value = viommu_read64(viommu, DMAR_IQT_REG);
-		pr_err("%s, DMAR%d,  tail:%lx", __func__, index, value);
+		//pr_err("%s, DMAR%d,  tail:%lx", __func__, index, value);
 		break;
 
 	case DMAR_IQH_REG:
 		value = viommu_read64(viommu, DMAR_IQH_REG);
-		pr_err("%s, DMAR%d,  head:%lx", __func__, index, value);
+		//pr_err("%s, DMAR%d,  head:%lx", __func__, index, value);
 		break;
 
 	case DMAR_IQA_REG:
 		value = viommu_read64(viommu, DMAR_IQA_REG);
-		pr_err("%s, DMAR%d,  IQA:%llx", __func__, index, value);
+		//pr_err("%s, DMAR%d,  IQA:%llx", __func__, index, value);
 		break;
 
 	default:
@@ -1364,21 +1419,35 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 	case DMAR_GCMD_REG:
 		viommu_write32(viommu, offset, (uint32_t)mmio->value);
 		handle_gcmd(viommu);
-		write_reg = false;
 		break;
 
 	case DMAR_RTADDR_REG:
 		viommu_write64(viommu, offset, mmio->value);
-		write_reg = false;
+		break;
+
+	case DMAR_FSTS_REG:
+		viommu_write32(viommu, offset, (uint32_t)mmio->value);
+		handle_fsts_write(viommu, mmio->value);
 		break;
 
 	case DMAR_FECTL_REG:
+//		viommu_write32(viommu, offset, (uint32_t)mmio->value);
+		handle_fectl_write(viommu, mmio->value);
+		break;
+
 	case DMAR_FEDATA_REG:
+		viommu_write32(viommu, offset, (uint32_t)mmio->value);
+		//pr_err("%s, DMAR%d, write Fault Event DATA, data:%llx", __func__, index, mmio->value);
+		break;
+
 	case DMAR_FEADDR_REG:
+		viommu_write32(viommu, offset, (uint32_t)mmio->value);
+		//pr_err("%s, DMAR%d, write Fault Event Addr, addr:%llx", __func__, index, mmio->value);
+		break;
+
 	case DMAR_FEUADDR_REG:
 		viommu_write32(viommu, offset, (uint32_t)mmio->value);
-		/* Hypervisor owns the fault management */
-		write_reg = false;
+		//pr_err("%s, DMAR%d, write Fault Event Addr Upper, addr_upper:%llx", __func__, index, mmio->value);
 		break;
 #if 0
 	case DMAR_PMEN_REG: /* Protected Memory Enable */
@@ -1466,9 +1535,15 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 	val64 = dmar_unit->cap;
 	val64 &= (~(VTD_CAP_ESIRTPS | VTD_CAP_FL5LP | VTD_CAP_PI | VTD_CAP_FL1GP | VTD_CAP_PHMR | VTD_CAP_PLMR | VTD_CAP_AFL)); /* Always clear bits. */
 	val64 |= (VTD_CAP_PSI | VTD_CAP_CM); /* Always set capability bits */
+
+	/* Set number of fault registers */
+	val64 = SET_BITS(val64, VTD_CAP_NFR_MASK, VTD_CAP_NFR_POS, VTD_FCRD_REG_NR - 1U);
+	viommu->frcd_index = 0U;
+	viommu->frcd_offset = GET_BITS(val64,VTD_CAP_FRO_MASK, VTD_CAP_FRO_POS);
+
 	viommu_write64(viommu, DMAR_CAP_REG, val64);
-	pr_err("%s, DMAR%d: Host cap: %-16llx Guest cap: %-16llx", __func__,
-		index, dmar_unit->cap, viommu_read64(viommu, DMAR_CAP_REG));
+	pr_err("%s, DMAR%d: Host cap: %-16llx Guest cap: %-16llx, frcd_offset:%lx", __func__,
+		index, dmar_unit->cap, viommu_read64(viommu, DMAR_CAP_REG), viommu->frcd_offset);
 
 	/* Extend Capability */
 	val64 = dmar_unit->ecap;
@@ -1477,6 +1552,9 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 	viommu_write64(viommu, DMAR_ECAP_REG, val64);
 	pr_err("%s, DMAR%d: Host ecap: %-16llx Guest ecap: %-16llx", __func__,
 		index, dmar_unit->ecap, viommu_read64(viommu, DMAR_ECAP_REG));
+
+	/* Initialize FSTS */
+	viommu_write32(viommu, DMAR_FSTS_REG, 0U);
 }
 
 void init_viommu(struct acrn_vm *vm)
