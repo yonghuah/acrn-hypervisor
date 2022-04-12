@@ -170,6 +170,7 @@ enum _page_table_level {
 
 struct pgtable {
 	uint64_t default_access_right;
+	uint64_t pgentry_present_mask;
 	struct page_pool *pool;
 	bool (*large_page_support)(enum _page_table_level level, uint64_t prot);
 	uint64_t (*pgentry_present)(uint64_t pte);
@@ -177,6 +178,8 @@ struct pgtable {
 	void (*tweak_exe_right)(uint64_t *entry);
 	void (*recover_exe_right)(uint64_t *entry);
 };
+
+#define PGENTRY_PRESENT(pgtbl, pte) (((pgtbl->pgentry_present_mask) & (pte)) != 0UL)
 
 /**
  * @brief Address space translation

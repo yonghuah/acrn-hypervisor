@@ -188,6 +188,7 @@ void init_ept_pgtable(struct pgtable *table, uint16_t vm_id)
 
 	table->pool = &ept_page_pool[vm_id];
 	table->default_access_right = EPT_RWX;
+	table->pgentry_present_mask = EPT_RWX;
 	table->pgentry_present = ept_pgentry_present;
 	table->clflush_pagewalk = ept_clflush_pagewalk;
 	table->large_page_support = ept_large_page_support;

@@ -92,7 +92,8 @@ static void viommu_write64(const struct acrn_viommu *viommu, uint32_t offset, ui
 }
 
 int dump_root_table(uint64_t rta, int dmar_index);
-#define VIOMMU_SHADOW_PGTABLE_SIZE (2 << 20) //todo
+#define VIOMMU_SHADOW_PGTABLE_SIZE (3 << 20) //todo
+
 static inline uint64_t io_pgentry_present(uint64_t pte)
 {
 	return pte & EPT_RWX;
@@ -116,13 +117,14 @@ static inline void shadow_nop_tweak_exe_right(uint64_t *entry __attribute__((unu
 static inline void shadow_nop_recover_exe_right(uint64_t *entry __attribute__((unused))) {}
 
 struct pgtable pgtable_ops = {
-	0UL, /* uint64_t default_access_right;*/
-	NULL, /* struct page_pool *pool; */
-	NULL, /* bool (*large_page_support)(enum _page_table_level level, uint64_t prot); */
-	io_pgentry_present, /* uint64_t (*pgentry_present)(uint64_t pte); */
-	NULL, /* void (*clflush_pagewalk)(const void *p); */
-	NULL, /* void (*tweak_exe_right)(uint64_t *entry); */
-	NULL, /* void (*recover_exe_right)(uint64_t *entry); */
+	.default_access_right = 0UL, /* uint64_t default_access_right;*/
+	.pgentry_present_mask = EPT_RWX,
+	.pool = NULL, /* struct page_pool *pool; */
+	.large_page_support = NULL, /* bool (*large_page_support)(enum _page_table_level level, uint64_t prot); */
+	.pgentry_present = io_pgentry_present, /* uint64_t (*pgentry_present)(uint64_t pte); */
+	.clflush_pagewalk = NULL, /* void (*clflush_pagewalk)(const void *p); */
+	.tweak_exe_right = NULL, /* void (*tweak_exe_right)(uint64_t *entry); */
+	.recover_exe_right = NULL, /* void (*recover_exe_right)(uint64_t *entry); */
 };
 
 #define VIOMMU_MAX_SHADOW_NUM (MAX_DRHDS)
@@ -216,6 +218,7 @@ void viommu_init_shadow_pgtable(struct acrn_viommu *vdmar, uint16_t dmar_index)
 	table->pool = pool;
 
 	table->default_access_right = EPT_RD | EPT_WR;//EPT_RWX;
+	table->pgentry_present_mask = EPT_RWX;
 	table->pgentry_present = shadow_pgentry_present;
 	table->clflush_pagewalk = shadow_clflush_pagewalk;
 	table->large_page_support = shadow_large_page_support;

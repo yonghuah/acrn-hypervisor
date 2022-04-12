@@ -91,6 +91,7 @@ static inline void ppt_nop_recover_exe_right(uint64_t *entry __attribute__((unus
 
 static const struct pgtable ppt_pgtable = {
 	.default_access_right = (PAGE_PRESENT | PAGE_RW | PAGE_USER),
+	.pgentry_present_mask = PAGE_PRESENT,
 	.pool = &ppt_page_pool,
 	.large_page_support = ppt_large_page_support,
 	.pgentry_present = ppt_pgentry_present,

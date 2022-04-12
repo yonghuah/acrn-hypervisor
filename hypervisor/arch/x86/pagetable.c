@@ -44,10 +44,13 @@ static void try_to_free_pgtable_page(const struct pgtable *table,
 {
 	if (type == MR_DEL) {
 		uint64_t index;
+		uint64_t present = table->pgentry_present_mask;
+
+		ASSERT((present == PAGE_PRESENT) || (present == EPT_RWX), "Invalid PG Entry Bitmask");
 
 		for (index = 0UL; index < PTRS_PER_PTE; index++) {
 			uint64_t *pte = pt_page + index;
-			if ((table->pgentry_present(*pte) != 0UL)) {
+			if(PGENTRY_PRESENT(table, (*pte))) {
 				break;
 			}
 		}
