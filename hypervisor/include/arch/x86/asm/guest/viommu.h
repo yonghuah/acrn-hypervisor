@@ -59,7 +59,7 @@ struct acrn_viommu {
 	uint8_t regs[4096];
 	struct pgtable shadow_pgtable;
 	uint64_t shadow_pml4[MAX_GUEST_IOMMU_DID];
-	uint64_t guest_pml4_gpa[MAX_GUEST_IOMMU_DID];
+	uint64_t guest_pml4[MAX_GUEST_IOMMU_DID];
 	/*debug*/
 	uint64_t map_cnt[MAX_GUEST_IOMMU_DID];
 	uint64_t unmap_cnt[MAX_GUEST_IOMMU_DID];
