@@ -173,13 +173,15 @@ struct pgtable {
 	uint64_t pgentry_present_mask;
 	struct page_pool *pool;
 	bool (*large_page_support)(enum _page_table_level level, uint64_t prot);
-	uint64_t (*pgentry_present)(uint64_t pte);
 	void (*clflush_pagewalk)(const void *p);
 	void (*tweak_exe_right)(uint64_t *entry);
 	void (*recover_exe_right)(uint64_t *entry);
 };
 
-#define PGENTRY_PRESENT(pgtbl, pte) (((pgtbl->pgentry_present_mask) & (pte)) != 0UL)
+static inline bool pgentry_present(struct pgtable *table, uint64_t pte)
+{
+	return ((table->pgentry_present_mask & pte) != 0UL);
+}
 
 /**
  * @brief Address space translation

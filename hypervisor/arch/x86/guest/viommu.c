@@ -94,15 +94,6 @@ static void viommu_write64(const struct acrn_viommu *viommu, uint32_t offset, ui
 int dump_root_table(uint64_t rta, int dmar_index);
 #define VIOMMU_SHADOW_PGTABLE_SIZE (3 << 20) //todo
 
-static inline uint64_t io_pgentry_present(uint64_t pte)
-{
-	return pte & EPT_RWX;
-}
-static inline uint64_t shadow_pgentry_present(uint64_t pte)
-{
-	return pte & EPT_RWX;
-}
-
 static inline void shadow_clflush_pagewalk(const void* etry)
 {
 	iommu_flush_cache(etry, sizeof(uint64_t));
@@ -121,7 +112,6 @@ struct pgtable pgtable_ops = {
 	.pgentry_present_mask = EPT_RWX,
 	.pool = NULL, /* struct page_pool *pool; */
 	.large_page_support = NULL, /* bool (*large_page_support)(enum _page_table_level level, uint64_t prot); */
-	.pgentry_present = io_pgentry_present, /* uint64_t (*pgentry_present)(uint64_t pte); */
 	.clflush_pagewalk = NULL, /* void (*clflush_pagewalk)(const void *p); */
 	.tweak_exe_right = NULL, /* void (*tweak_exe_right)(uint64_t *entry); */
 	.recover_exe_right = NULL, /* void (*recover_exe_right)(uint64_t *entry); */
@@ -219,7 +209,6 @@ void viommu_init_shadow_pgtable(struct acrn_viommu *vdmar, uint16_t dmar_index)
 
 	table->default_access_right = EPT_RD | EPT_WR;//EPT_RWX;
 	table->pgentry_present_mask = EPT_RWX;
-	table->pgentry_present = shadow_pgentry_present;
 	table->clflush_pagewalk = shadow_clflush_pagewalk;
 	table->large_page_support = shadow_large_page_support;
 	table->tweak_exe_right = shadow_nop_tweak_exe_right;
@@ -239,18 +228,18 @@ void viommu_free_shadow_table(struct acrn_viommu *viommu, uint64_t *shadow_pml4)
 	if (shadow_pml4) {
 		for (i = 0UL; i < PTRS_PER_PML4E; i++) {
 			shadow_pml4e = pml4e_offset(shadow_pml4, i << PML4E_SHIFT);
-			if (!table->pgentry_present(*shadow_pml4e)) {
+			if (!pgentry_present(table, (*shadow_pml4e))) {
 				continue;
 			}
 			for (j = 0UL; j < PTRS_PER_PDPTE; j++) {
 				shadow_pdpte = pdpte_offset(shadow_pml4e, j << PDPTE_SHIFT);
-				if (!table->pgentry_present(*shadow_pdpte) ||
+				if (!pgentry_present(table, (*shadow_pdpte)) ||
 				    is_leaf_ept_entry(*shadow_pdpte, IA32E_PDPT)) {
 					continue;
 				}
 				for (k = 0UL; k < PTRS_PER_PDE; k++) {
 					shadow_pde = pde_offset(shadow_pdpte, k << PDE_SHIFT);
-					if (!table->pgentry_present(*shadow_pde) ||
+					if (!pgentry_present(table, (*shadow_pde)) ||
 					    is_leaf_ept_entry(*shadow_pde, IA32E_PD)) {
 						continue;
 					}
@@ -304,12 +293,12 @@ void walk_guest_io_pgtable(struct acrn_viommu *viommu, uint16_t did, shadow_pge_
 	for (i = 0UL; i < PTRS_PER_PML4E; i++) {
 		//pml4e = pml4e_offset((uint64_t *)get_eptp(vm), i << PML4E_SHIFT);
 		pml4e = pml4e_offset((uint64_t *)guest_pml4, i << PML4E_SHIFT);
-		if (table->pgentry_present(*pml4e) == 0UL) {
+		if (!pgentry_present(table, (*pml4e))) {
 			continue;
 		}
 		for (j = 0UL; j < PTRS_PER_PDPTE; j++) {
 			pdpte = pdpte_offset(pml4e, j << PDPTE_SHIFT);
-			if (table->pgentry_present(*pdpte) == 0UL) {
+			if (!pgentry_present(table, (*pdpte))) {
 				continue;
 			}
 			if (pdpte_large(*pdpte) != 0UL) {
@@ -320,7 +309,7 @@ void walk_guest_io_pgtable(struct acrn_viommu *viommu, uint16_t did, shadow_pge_
 			}
 			for (k = 0UL; k < PTRS_PER_PDE; k++) {
 				pde = pde_offset(pdpte, k << PDE_SHIFT);
-				if (table->pgentry_present(*pde) == 0UL) {
+				if (!pgentry_present(table, (*pde))) {
 					continue;
 				}
 				if (pde_large(*pde) != 0UL) {
@@ -332,7 +321,7 @@ void walk_guest_io_pgtable(struct acrn_viommu *viommu, uint16_t did, shadow_pge_
 				for (m = 0UL; m < PTRS_PER_PTE; m++) {
 					pte = pte_offset(pde, m << PTE_SHIFT);
 					iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT) | (m << PTE_SHIFT);
-					if (table->pgentry_present(*pte) != 0UL) {
+					if (pgentry_present(table, (*pte))) {
 						n4k++;
 						cb(viommu, did, iova, pte, PTE_SIZE);
 					}
