@@ -901,7 +901,7 @@ static int32_t shell_dump_viommu(int32_t argc, char **argv)
 	/* User input invalidation */
 	if (argc < 2) {
 		pr_err("%s, invalid para.", __func__);
-		return;
+		return 0;
 	}
 	op = (uint32_t)strtol_deci(argv[1]);
 	if (argc >= 3)
@@ -911,7 +911,7 @@ static int32_t shell_dump_viommu(int32_t argc, char **argv)
 		did = (uint32_t)strtol_deci(argv[3]);
 
 	if (argc >= 5)
-		addr  = (uint64_t *)strtoul_hex(argv[4]);
+		addr  = (uint64_t)strtoul_hex(argv[4]);
 
 	if (argc >= 6)
 		nr_pages = (uint32_t)strtol_deci(argv[5]);
