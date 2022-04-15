@@ -45,9 +45,9 @@
 typedef uint64_t (*pgtable_mapping_handler)(struct acrn_viommu *viommu, uint16_t did, uint64_t iova, uint64_t gpa, uint64_t size, uint64_t permit);
 
 /*
-   This pgtable instance is referecned only for guest page table entry lookup,
-   hence only 'pgentry_present_mask' is required and initialized, all other fileds
-   are initialized to NULL and shall never be accessed.
+ * This pgtable instance is referecned only for guest page table entry lookup,
+ * hence only 'pgentry_present_mask' is required and initialized, all other fileds
+ * are initialized to NULL and shall never be accessed.
  */
 static struct pgtable guest_pgtable = {
 	.default_access_right = 0UL,
@@ -59,21 +59,28 @@ static struct pgtable guest_pgtable = {
 	.recover_exe_right = NULL,
 };
 
-#define VIOMMU_MAX_SHADOW_NUM (MAX_DRHDS)
-#define VIOMMU_IOVA_SPACE_SIZE (MEM_4G)
-static struct page *viommu_shadow_pages[VIOMMU_MAX_SHADOW_NUM];
-static uint64_t *viommu_shadow_page_bitmap[VIOMMU_MAX_SHADOW_NUM];
-static struct page viommu_shadow_dummy_pages[VIOMMU_MAX_SHADOW_NUM];
-
-/* ept: extended page pool*/
-static struct page_pool viommu_shadow_page_pool[VIOMMU_MAX_SHADOW_NUM];
-
+/*
+ * Below data structure to reserve memory pool for vIOMMU shadow page table:
+ *  1) According to VT-d Specification section 9.3, IOMMU second level page table
+ *     shall be shared between devices with the same Domain ID(DID). At the worst
+ *     case, number of DID equals number of PCI devices, which is also the number
+ *     of shadow page tables.
+ *  2) Current support vIOMMU for service VM only.
+ *  3) Define a global pool to hold all vIOMMU shadow tables, the number of which
+ *     will be no greater than number of PCI devices.
+ */
+#define VIOMMU_MAX_SHADOW_NUM 16
+#define VIOMMU_IOVA_SPACE_SIZE (MEM_2G)
 #define VIOMMU_SHADOW_PML4_PAGE_NUM	PML4_PAGE_NUM(MAX_PHY_ADDRESS_SPACE)
 #define VIOMMU_SHADOW_PDPT_PAGE_NUM	PDPT_PAGE_NUM(MAX_PHY_ADDRESS_SPACE)
+static struct page *viommu_shadow_pages;
+static uint64_t *viommu_shadow_page_bitmap;
+static struct page viommu_shadow_dummy_pages;
+static struct page_pool viommu_shadow_page_pool;
 
 /*
  * Currently, support vIOMMU for serice VM only, need to move this definition
- * to struct acrn_vm when need to support mulitple VM with vIOMMU
+ * to struct acrn_vm when need to support vIOMMU for mulitple VM.
  */
 static struct acrn_viommu viommu_units[MAX_DRHDS];
 
@@ -91,9 +98,19 @@ static inline void shadow_clflush_pagewalk(const void* etry)
 	iommu_flush_cache(etry, sizeof(uint64_t));
 }
 
-static inline bool shadow_large_page_support(enum _page_table_level level, __unused uint64_t prot)
+static inline bool shadow_large_1G_page_support(enum _page_table_level level, __unused uint64_t prot)
 {
 	return ((level == IA32E_PD) || (level == IA32E_PDPT));
+}
+
+static inline bool shadow_large_2M_page_support(enum _page_table_level level, __unused uint64_t prot)
+{
+	return (level == IA32E_PD);
+}
+
+static inline bool shadow_no_large_page_support(enum _page_table_level level, __unused uint64_t prot)
+{
+	return false;
 }
 
 static inline void shadow_nop_tweak_exe_right(uint64_t *entry __attribute__((unused))) {}
@@ -119,7 +136,7 @@ static void viommu_write64(const struct acrn_viommu *viommu, uint32_t offset, ui
 	*((uint64_t *)(hpa2hva(viommu->regs + offset))) = value;
 }
 
-static bool is_leaf_ept_entry(uint64_t ept_entry, enum _page_table_level pt_level)
+static bool is_leaf_entry(uint64_t ept_entry, enum _page_table_level pt_level)
 {
 	return (((ept_entry & PAGE_PSE) != 0U) || (pt_level == IA32E_PT));
 }
@@ -134,83 +151,79 @@ static inline uint64_t get_shadow_pml4(struct acrn_viommu *viommu, uint32_t did)
 	return viommu->shadow_pml4[did];
 }
 
-static uint64_t viommu_get_shadow_page_num(void)
+static uint64_t get_shadow_page_num(void)
 {
-	uint64_t ept_pd_page_num = PD_PAGE_NUM(VIOMMU_IOVA_SPACE_SIZE);
-	uint64_t ept_pt_page_num = PT_PAGE_NUM(VIOMMU_IOVA_SPACE_SIZE);
+	uint64_t pd_page_num = PD_PAGE_NUM(VIOMMU_IOVA_SPACE_SIZE);
+	uint64_t pt_page_num = PT_PAGE_NUM(VIOMMU_IOVA_SPACE_SIZE);
 
-	return roundup((VIOMMU_SHADOW_PML4_PAGE_NUM + VIOMMU_SHADOW_PDPT_PAGE_NUM + ept_pd_page_num + ept_pt_page_num), 64U);
+	return roundup((VIOMMU_SHADOW_PML4_PAGE_NUM + VIOMMU_SHADOW_PDPT_PAGE_NUM + pd_page_num + pt_page_num), 64U);
 }
 
-static void viommu_reserve_shadow_bitmap(void)
+static void reserve_shadow_bitmap(void)
 {
-	uint32_t i;
 	uint64_t bitmap_base;
 	uint64_t bitmap_size;
-	uint64_t bitmap_offset;
 
-	bitmap_size = (viommu_get_shadow_page_num() * VIOMMU_MAX_SHADOW_NUM) / 8;
-	bitmap_offset = viommu_get_shadow_page_num() / 8;
-
-	pr_err("%s, shadow bitmap size: :%lld.\n", __func__, bitmap_size);
-
+	bitmap_size = (get_shadow_page_num() * VIOMMU_MAX_SHADOW_NUM) / 8U;
 	bitmap_base = e820_alloc_memory(bitmap_size, ~0UL);
 	set_paging_supervisor(bitmap_base, bitmap_size);
-
-	for(i = 0; i < VIOMMU_MAX_SHADOW_NUM; i++){
-		viommu_shadow_page_bitmap[i] = (uint64_t *)(void *)(bitmap_base + bitmap_offset * i);
-	}
+	viommu_shadow_page_bitmap = (uint64_t *)bitmap_base;
 }
 
-uint64_t viommu_get_total_shadow_4k_pages_size(void)
+static uint64_t get_total_shadow_4k_pages_size(void)
 {
-	return VIOMMU_MAX_SHADOW_NUM* (viommu_get_shadow_page_num()) * PAGE_SIZE;
+	return VIOMMU_MAX_SHADOW_NUM* (get_shadow_page_num()) * PAGE_SIZE;
 }
 
 /*
- * @brief Reserve space for EPT 4K pages from platform E820 table
+ * @brief Reserve space for 4K pages.
  */
 void viommu_reserve_buffer_for_shadow_pages(void)
 {
 	uint64_t page_base;
-	uint16_t dmar_index;
-	uint32_t offset = 0U;
 
-	pr_err("%s, shadow pages:%lld, size of each shadow :%lld (pages)\n", __func__,
-		viommu_get_shadow_page_num()* MAX_DRHDS, viommu_get_shadow_page_num);
+	page_base = e820_alloc_memory(get_total_shadow_4k_pages_size(), ~0UL);
+	set_paging_supervisor(page_base, get_total_shadow_4k_pages_size());
+	viommu_shadow_pages = (struct page *)page_base;
 
-	page_base = e820_alloc_memory(viommu_get_total_shadow_4k_pages_size(), ~0UL);
-	set_paging_supervisor(page_base, viommu_get_total_shadow_4k_pages_size());
-	for (dmar_index = 0U; dmar_index < VIOMMU_MAX_SHADOW_NUM; dmar_index++) {
-		viommu_shadow_pages[dmar_index] = (struct page *)(void *)(page_base + offset);
-		offset += viommu_get_shadow_page_num() * PAGE_SIZE;
-	}
-
-	viommu_reserve_shadow_bitmap();
+	reserve_shadow_bitmap();
 }
 
-void viommu_init_shadow_pgtable(struct acrn_viommu *vdmar, uint16_t dmar_index)
+void init_shadow_pgtable(struct acrn_viommu *viommu)
 {
 	struct pgtable *table;
+	struct page_pool * pool;
+	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
 
-	table = &vdmar->shadow_pgtable;
+	table = &viommu->shadow_pgtable;
 
-	struct page_pool * pool = &viommu_shadow_page_pool[dmar_index];
-	pool->start_page = viommu_shadow_pages[dmar_index];
-	pool->bitmap_size = viommu_get_shadow_page_num() / 64;
-	pool->bitmap = viommu_shadow_page_bitmap[dmar_index];
-	pool->dummy_page = &viommu_shadow_dummy_pages[dmar_index];
+	pool = &viommu_shadow_page_pool;
+	pool->start_page = viommu_shadow_pages;
+	pool->bitmap_size = get_shadow_page_num() / 64U;
+	pool->bitmap = viommu_shadow_page_bitmap;
+	pool->dummy_page = &viommu_shadow_dummy_pages;
 
 	spinlock_init(&pool->lock);
 	memset((void *)pool->bitmap, 0, pool->bitmap_size * sizeof(uint64_t));
 	pool->last_hint_id = 0UL;
 
 	table->pool = pool;
-
 	table->default_access_right = EPT_RD | EPT_WR;
 	table->pgentry_present_mask = EPT_RWX;
 	table->clflush_pagewalk = shadow_clflush_pagewalk;
-	table->large_page_support = shadow_large_page_support;
+
+	/*
+	 * Intel VT-d Spec 10.4.2: Hardware implementations supporting a
+	 * specific large-page size must support all smaller large-page size.
+	 */
+	if ((iommu_cap_super_page_val(dmar_unit->cap) & 0x2U) != 0U) {
+		table->large_page_support = shadow_large_1G_page_support;
+	} else if ((iommu_cap_super_page_val(dmar_unit->cap) & 0x1U) != 0U) {
+		table->large_page_support = shadow_large_2M_page_support;
+	} else {
+		table->large_page_support = shadow_no_large_page_support;
+	}
+
 	table->tweak_exe_right = shadow_nop_tweak_exe_right;
 	table->recover_exe_right = shadow_nop_recover_exe_right;
 }
@@ -218,7 +231,7 @@ void viommu_init_shadow_pgtable(struct acrn_viommu *vdmar, uint16_t dmar_index)
 /*
  * @brief Release all pages except the PML4E page of a shadow table 
  */
-void viommu_free_shadow_table(struct acrn_viommu *viommu, uint64_t *shadow_pml4)
+static void viommu_free_shadow_table(struct acrn_viommu *viommu, uint64_t *shadow_pml4)
 {
 	uint64_t *shadow_pml4e, *shadow_pdpte, *shadow_pde;
 	uint64_t i, j, k;
@@ -234,13 +247,13 @@ void viommu_free_shadow_table(struct acrn_viommu *viommu, uint64_t *shadow_pml4)
 			for (j = 0UL; j < PTRS_PER_PDPTE; j++) {
 				shadow_pdpte = pdpte_offset(shadow_pml4e, j << PDPTE_SHIFT);
 				if (!pgentry_present(table, (*shadow_pdpte)) ||
-				    is_leaf_ept_entry(*shadow_pdpte, IA32E_PDPT)) {
+				    is_leaf_entry(*shadow_pdpte, IA32E_PDPT)) {
 					continue;
 				}
 				for (k = 0UL; k < PTRS_PER_PDE; k++) {
 					shadow_pde = pde_offset(shadow_pdpte, k << PDE_SHIFT);
 					if (!pgentry_present(table, (*shadow_pde)) ||
-					    is_leaf_ept_entry(*shadow_pde, IA32E_PD)) {
+					    is_leaf_entry(*shadow_pde, IA32E_PD)) {
 						continue;
 					}
 					free_page(table->pool, (struct page *)((*shadow_pde) & EPT_ENTRY_PFN_MASK));
@@ -1232,9 +1245,7 @@ void init_viommu(struct acrn_vm *vm)
 
 		init_readonly_registers(&viommu_units[i]);
 
-#if SHADOW_EN
-		viommu_init_shadow_pgtable(&viommu_units[i], i);
-#endif
+		init_shadow_pgtable(&viommu_units[i]);
 
 		register_mmio_emulation_handler(vm, viommu_mmio_handler,
 			dmar_unit->drhd->reg_base_addr,
