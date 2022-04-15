@@ -15,8 +15,6 @@
 #include <asm/guest/viommu.h>
 #include <asm/board.h>
 
-#define DBG_LEVEL_VIOMMU 5U
-
 #define VTD_DOMAIN_ID_SHIFT             16  /* 16-bit domain id for 64K domains */
 #define VTD_DOMAIN_ID_MASK              ((1UL << VTD_DOMAIN_ID_SHIFT) - 1)
 #define VTD_INV_DESC_CC_G               (3ULL << 4)
@@ -39,39 +37,67 @@
 #define VTD_INV_DESC_IOTLB_RSVD_LO      0xffffffff0000ff00ULL
 #define VTD_INV_DESC_IOTLB_RSVD_HI      0xf80ULL
 
+#define VIOMMU_SHADOW_PGTABLE_SIZE (3 << 20) /*Hardcode this value for now*/
+
 #define SHADOW_DBG 1
-
-#if SHADOW_DBG
-extern int dbg_mapping;
-
-#define SYNC_TBL	0
-#define G_TBL_LOOKUP	1
-#define H_TBL_LOOKUP	2
-#define H_TBL_MAP	3
-#define H_TBL_UNMAP	4
-#define H_IOTLB_PSI	5
-#define MAX_TBL		6
-
-#define MAX_TIME_RCD 10000000
-
-static char *tbl_name[MAX_TBL] = {
-	"SYNC_TBL",
-	"G_TBL_LOOKUP",
-	"H_TBL_LOOKUP",
-	"H_TBL_MAP",
-	"H_TBL_UNMAP",
-	"H_IOTBL_PSI"
-};
-static void insert_time(int tbl, uint64_t us);
-#endif
+#define DBG_LEVEL_VIOMMU 5U
 
 typedef uint64_t (*pgtable_mapping_handler)(struct acrn_viommu *viommu, uint16_t did, uint64_t iova, uint64_t gpa, uint64_t size, uint64_t permit);
 
-/* TODO: every DMAR in every guest should have one vIOMMU */
-static struct acrn_viommu vdmar_drhd_units[MAX_DRHDS] = {0};
+/*
+   This pgtable instance is referecned only for guest page table entry lookup,
+   hence only 'pgentry_present_mask' is required and initialized, all other fileds
+   are initialized to NULL and shall never be accessed.
+ */
+static struct pgtable guest_pgtable = {
+	.default_access_right = 0UL,
+	.pgentry_present_mask = EPT_RWX,
+	.pool = NULL,
+	.large_page_support = NULL,
+	.clflush_pagewalk = NULL,
+	.tweak_exe_right = NULL,
+	.recover_exe_right = NULL,
+};
 
-#define GET_BITS  dmar_get_bitslice
-#define SET_BITS  dmar_set_bitslice
+#define VIOMMU_MAX_SHADOW_NUM (MAX_DRHDS)
+#define VIOMMU_IOVA_SPACE_SIZE (MEM_4G)
+static struct page *viommu_shadow_pages[VIOMMU_MAX_SHADOW_NUM];
+static uint64_t *viommu_shadow_page_bitmap[VIOMMU_MAX_SHADOW_NUM];
+static struct page viommu_shadow_dummy_pages[VIOMMU_MAX_SHADOW_NUM];
+
+/* ept: extended page pool*/
+static struct page_pool viommu_shadow_page_pool[VIOMMU_MAX_SHADOW_NUM];
+
+#define VIOMMU_SHADOW_PML4_PAGE_NUM	PML4_PAGE_NUM(MAX_PHY_ADDRESS_SPACE)
+#define VIOMMU_SHADOW_PDPT_PAGE_NUM	PDPT_PAGE_NUM(MAX_PHY_ADDRESS_SPACE)
+
+/*
+ * Currently, support vIOMMU for serice VM only, need to move this definition
+ * to struct acrn_vm when need to support mulitple VM with vIOMMU
+ */
+static struct acrn_viommu viommu_units[MAX_DRHDS];
+
+#if SHADOW_DBG
+#define RECORD_SHADOW_MAP	0
+#define RECORD_SHADOW_UNMAP	1
+#define RECORD_IOTLB		2
+#define RECORD_MAX_TBL_NUM	3
+static void insert_time(int tbl, uint64_t us);
+int dump_root_table(uint64_t rta, int dmar_index);
+#endif
+
+static inline void shadow_clflush_pagewalk(const void* etry)
+{
+	iommu_flush_cache(etry, sizeof(uint64_t));
+}
+
+static inline bool shadow_large_page_support(enum _page_table_level level, __unused uint64_t prot)
+{
+	return ((level == IA32E_PD) || (level == IA32E_PDPT));
+}
+
+static inline void shadow_nop_tweak_exe_right(uint64_t *entry __attribute__((unused))) {}
+static inline void shadow_nop_recover_exe_right(uint64_t *entry __attribute__((unused))) {}
 
 static uint32_t viommu_read32(const struct acrn_viommu *viommu, uint32_t offset)
 {
@@ -92,44 +118,6 @@ static void viommu_write64(const struct acrn_viommu *viommu, uint32_t offset, ui
 {
 	*((uint64_t *)(hpa2hva(viommu->regs + offset))) = value;
 }
-
-int dump_root_table(uint64_t rta, int dmar_index);
-#define VIOMMU_SHADOW_PGTABLE_SIZE (3 << 20) //todo
-
-static inline void shadow_clflush_pagewalk(const void* etry)
-{
-	iommu_flush_cache(etry, sizeof(uint64_t));
-}
-
-static inline bool shadow_large_page_support(enum _page_table_level level, __unused uint64_t prot)
-{
-	return ((level == IA32E_PD) || (level == IA32E_PDPT));
-}
-
-static inline void shadow_nop_tweak_exe_right(uint64_t *entry __attribute__((unused))) {}
-static inline void shadow_nop_recover_exe_right(uint64_t *entry __attribute__((unused))) {}
-
-struct pgtable pgtable_ops = {
-	.default_access_right = 0UL, /* uint64_t default_access_right;*/
-	.pgentry_present_mask = EPT_RWX,
-	.pool = NULL, /* struct page_pool *pool; */
-	.large_page_support = NULL, /* bool (*large_page_support)(enum _page_table_level level, uint64_t prot); */
-	.clflush_pagewalk = NULL, /* void (*clflush_pagewalk)(const void *p); */
-	.tweak_exe_right = NULL, /* void (*tweak_exe_right)(uint64_t *entry); */
-	.recover_exe_right = NULL, /* void (*recover_exe_right)(uint64_t *entry); */
-};
-
-#define VIOMMU_MAX_SHADOW_NUM (MAX_DRHDS)
-#define VIOMMU_IOVA_SPACE_SIZE (MEM_4G)
-static struct page *viommu_shadow_pages[VIOMMU_MAX_SHADOW_NUM];
-static uint64_t *viommu_shadow_page_bitmap[VIOMMU_MAX_SHADOW_NUM];
-static struct page viommu_shadow_dummy_pages[VIOMMU_MAX_SHADOW_NUM];
-
-/* ept: extended page pool*/
-static struct page_pool viommu_shadow_page_pool[VIOMMU_MAX_SHADOW_NUM];
-
-#define VIOMMU_SHADOW_PML4_PAGE_NUM	PML4_PAGE_NUM(MAX_PHY_ADDRESS_SPACE)
-#define VIOMMU_SHADOW_PDPT_PAGE_NUM	PDPT_PAGE_NUM(MAX_PHY_ADDRESS_SPACE)
 
 static bool is_leaf_ept_entry(uint64_t ept_entry, enum _page_table_level pt_level)
 {
@@ -219,7 +207,7 @@ void viommu_init_shadow_pgtable(struct acrn_viommu *vdmar, uint16_t dmar_index)
 
 	table->pool = pool;
 
-	table->default_access_right = EPT_RD | EPT_WR;//EPT_RWX;
+	table->default_access_right = EPT_RD | EPT_WR;
 	table->pgentry_present_mask = EPT_RWX;
 	table->clflush_pagewalk = shadow_clflush_pagewalk;
 	table->large_page_support = shadow_large_page_support;
@@ -270,11 +258,8 @@ void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable_mappin
 	uint64_t *pml4e, *pdpte, *pde, *pte;
 	uint64_t i, j, k, m;
 	uint64_t iova, gpa;
-	const struct pgtable *table = &pgtable_ops;
+	const struct pgtable *table = &guest_pgtable;
 	uint64_t guest_pml4 = get_guest_pml4(viommu, did);
-	uint64_t n1g = 0, n2m = 0, n4k = 0;
-
-	//pr_err("%s DMAR%d, did:%d, start...", __func__, viommu->drhd_rt->index, did);
 
 	for (i = 0UL; i < PTRS_PER_PML4E; i++) {
 		pml4e = pml4e_offset((uint64_t *)guest_pml4, i << PML4E_SHIFT);
@@ -299,7 +284,6 @@ void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable_mappin
 				}
 				if (pde_large(*pde) != 0UL) {
 					iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT);
-					n2m++;
 					gpa = (*pde & (~EPT_PFN_HIGH_MASK)) & (~(PDE_SIZE - 1UL));
 					leaf_handler(viommu, did, iova, gpa, PDE_SIZE, ((*pde) & EPT_RWX));
 					continue;
@@ -315,7 +299,6 @@ void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable_mappin
 			}
 		}
 	}
-	//pr_err("%s done, i = %lld,  j = %lld, k = %lld, nr_1G:%d, nr_2m:%d, nr_4k:%d.", __func__, i, j, k, n1g, n2m, n4k);
 }
 
 static bool iommu_rsvd_region(struct acrn_viommu *viommu, uint16_t did, uint64_t iova, uint64_t gpa)
@@ -329,14 +312,15 @@ static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, ui
 	uint64_t hpa, pte_size, synced_size = size;
 	const uint64_t *shadow_pte;
 	uint64_t shadow_pml4 = viommu->shadow_pml4[did];
+#if SHADOW_DBG
 	uint64_t t1, t2;
-//	static int max_msg;
+#endif
 
 	if (((permit != 0UL) && (size != PTE_SIZE) && (size != PDE_SIZE) && (size != PDPTE_SIZE)) ||(size == 0UL)) {
 		pr_err("%s, WARNING: #DMAR%d, did: %d, iova:%llx, HIT Un-aligned size:%llx for shadow maping.", __func__, viommu->drhd_rt->index, did, iova, size);
 	}
 
-	shadow_pte = pgtable_lookup_entry((uint64_t *)shadow_pml4, iova, &pte_size, &pgtable_ops);
+	shadow_pte = pgtable_lookup_entry((uint64_t *)shadow_pml4, iova, &pte_size, &guest_pgtable);
 	if (permit != 0UL) { /* Add mapping to shadow table */
 		if (shadow_pte) {
 			/* corner case: mapping is already present in shadow table, remove it first */
@@ -347,14 +331,14 @@ static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, ui
 		}
 
 		hpa = gpa2hpa(viommu->vm, gpa);
-		if ((hpa != INVALID_HPA) || (iommu_rsvd_region(viommu, did, iova, gpa))) { /* For RMRR region, IOVA equals to GPA */
+		if ((hpa != INVALID_HPA) || (iommu_rsvd_region(viommu, did, iova, gpa))) { /* For RMRR region, IOVA == GPA */
 #if SHADOW_DBG
 			t1 = ticks_to_us(cpu_ticks());
 #endif
 			viommu_shadow_add_mr(viommu, shadow_pml4, hpa, iova, size, permit);
 #if SHADOW_DBG
 			t2 = ticks_to_us(cpu_ticks());
-			insert_time(H_TBL_MAP, t2 - t1);
+			insert_time(RECORD_SHADOW_MAP, t2 - t1);
 			viommu->map_cnt[did]++;
 #endif
 		}
@@ -371,7 +355,7 @@ static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, ui
 			viommu_shadow_del_mr(viommu, shadow_pml4, iova, pte_size);
 			#if SHADOW_DBG
 			t2 = ticks_to_us(cpu_ticks());
-			insert_time(H_TBL_UNMAP, t2 - t1);
+			insert_time(RECORD_SHADOW_UNMAP, t2 - t1);
 			viommu->unmap_cnt[did]++;
 			#endif
 			synced_size = pte_size;
@@ -387,7 +371,7 @@ static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, u
 	uint64_t gpa, pte_size, req_size, synced_size, permit;
 	const uint64_t *guest_pte;
 	uint64_t iova_end = addr + size, iova = addr;
-	uint64_t guest_pml4 = get_guest_pml4(viommu, did); /*todo GPA -> HVA*/
+	uint64_t guest_pml4 = get_guest_pml4(viommu, did);
 	uint64_t t_enter, t_exit;
 
 #if SHADOW_DBG
@@ -395,7 +379,7 @@ static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, u
 #endif
 
 	while (iova < iova_end) {
-		guest_pte = pgtable_lookup_entry((uint64_t *)guest_pml4, iova, &pte_size, &pgtable_ops);
+		guest_pte = pgtable_lookup_entry((uint64_t *)guest_pml4, iova, &pte_size, &guest_pgtable);
 		if (guest_pte == NULL) { /* Remve mapping from shadow table */
 			req_size = iova_end - iova;
 			synced_size = shadow_sync(viommu, did, iova, 0UL, req_size, 0UL);
@@ -419,7 +403,7 @@ static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, u
 
 #if SHADOW_DBG
 	t_exit = ticks_to_us(cpu_ticks());
-	insert_time(H_IOTLB_PSI, t_exit - t_enter);
+	insert_time(RECORD_IOTLB, t_exit - t_enter);
 #endif
 }
 
@@ -551,7 +535,7 @@ static int context_cache_inv_device(struct acrn_viommu *vtd, uint32_t did, uint3
 			//dump_context_entry("Guest-CTX-e", i, (j >> 3) & 0x1f, j & 0x7, p_guest_context_e);
 			//pr_err("%s, ctx_cnt:%lld.", __func__, ctx_cnt);
 
-			guest_did = GET_BITS(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
+			guest_did = dmar_get_bitslice(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
 			ASSERT(guest_did < MAX_GUEST_IOMMU_DID, "Guest DID overflow"); //this assert check is for did remapping logic
 			#if 0
 			if (guest_did != did) { //need to ignore did input value
@@ -663,7 +647,7 @@ static int context_cache_inv_global(struct acrn_viommu *vtd)
 					//dump_context_entry("Guest-CTX-e", i, (j >> 3) & 0x1f, j & 0x7, p_guest_context_e);
 					//pr_err("%s, ctx_cnt:%lld.", __func__, ctx_cnt);
 
-					guest_did = GET_BITS(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
+					guest_did = dmar_get_bitslice(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
 					ASSERT(guest_did < MAX_GUEST_IOMMU_DID, "Guest DID overflow");
 
 					sid = (i << 8) | j;
@@ -790,8 +774,6 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 {
 	bool write_iqt = true;
 	struct dmar_entry iotlb_desc;
-	uint64_t addr = 0UL, am = 0UL;
-	uint16_t did = 0U;
 	int index = viommu->drhd_rt->index;
 
 	switch (entry->lo_64 & VTD_INV_DESC_IOTLB_G) {
@@ -1198,7 +1180,6 @@ static int32_t viommu_mmio_handler(struct io_request *io_req, void *private_data
 
 static void init_readonly_registers(struct acrn_viommu *viommu)
 {
-	uint32_t val32;
 	uint64_t val64;
 	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
 	int index = dmar_unit->index;
@@ -1214,9 +1195,9 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 	val64 |= (VTD_CAP_PSI | VTD_CAP_CM); /* Always set capability bits */
 
 	/* Set number of fault registers */
-	val64 = SET_BITS(val64, VTD_CAP_NFR_MASK, VTD_CAP_NFR_POS, VTD_FCRD_REG_NR - 1U);
+	val64 = dmar_set_bitslice(val64, VTD_CAP_NFR_MASK, VTD_CAP_NFR_POS, VTD_FCRD_REG_NR - 1U);
 	viommu->frcd_index = 0U;
-	viommu->frcd_offset = GET_BITS(val64,VTD_CAP_FRO_MASK, VTD_CAP_FRO_POS);
+	viommu->frcd_offset = dmar_get_bitslice(val64,VTD_CAP_FRO_MASK, VTD_CAP_FRO_POS);
 
 	viommu_write64(viommu, DMAR_CAP_REG, val64);
 	pr_err("%s, DMAR%d: Host cap: %-16llx Guest cap: %-16llx, frcd_offset:%lx", __func__,
@@ -1242,23 +1223,23 @@ void init_viommu(struct acrn_vm *vm)
 	for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
 		dmar_unit = get_drhd_unit(i);
 
-		spinlock_init(&vdmar_drhd_units[i].lock);
+		spinlock_init(&viommu_units[i].lock);
 
-		vdmar_drhd_units[i].drhd_rt = dmar_unit;
+		viommu_units[i].drhd_rt = dmar_unit;
 
 		/* Assuming one DMAR unit can be seen by one guest only */
-		vdmar_drhd_units[i].vm = vm;
+		viommu_units[i].vm = vm;
 
-		init_readonly_registers(&vdmar_drhd_units[i]);
+		init_readonly_registers(&viommu_units[i]);
 
 #if SHADOW_EN
-		viommu_init_shadow_pgtable(&vdmar_drhd_units[i], i);
+		viommu_init_shadow_pgtable(&viommu_units[i], i);
 #endif
 
 		register_mmio_emulation_handler(vm, viommu_mmio_handler,
 			dmar_unit->drhd->reg_base_addr,
 			dmar_unit->drhd->reg_base_addr + PAGE_SIZE,
-			(void *)&vdmar_drhd_units[i], false);
+			(void *)&viommu_units[i], false);
 
 		dev_dbg(DBG_LEVEL_VIOMMU, "register MMIO %llx", dmar_unit->drhd->reg_base_addr);
 	}
@@ -1271,6 +1252,13 @@ void deinit_viommu(struct acrn_vm *vm)
 
 #if SHADOW_DBG
 /*All below are debug code */
+
+static char *tbl_name[RECORD_MAX_TBL_NUM] = {
+	"RECORD_SHADOW_MAP",
+	"RECORD_SHADOW_UNMAP",
+	"RECORD_IOTLB"
+};
+
 static void dump_root_entry(char *str, int bus, struct dmar_entry * p_root_e)
 {
 	pr_err("%s: root entry[bus = %d], conext pointer:%llx.", str, bus, p_root_e->lo_64);
@@ -1280,12 +1268,12 @@ static int dump_context_entry(char *str, uint32_t bus, uint32_t dev, uint32_t fu
 {
 	uint64_t fpd, tt, slptptr, aw, did, P;
 
-	P = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_P_MASK, CTX_ENTRY_LOWER_P_POS);
-	tt = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_TT_MASK, CTX_ENTRY_LOWER_TT_POS);
-	fpd = GET_BITS(p_context_e->lo_64, CTX_ENTRY_LOWER_FPD_MASK, CTX_ENTRY_LOWER_FPD_POS);
+	P = dmar_get_bitslice(p_context_e->lo_64, CTX_ENTRY_LOWER_P_MASK, CTX_ENTRY_LOWER_P_POS);
+	tt = dmar_get_bitslice(p_context_e->lo_64, CTX_ENTRY_LOWER_TT_MASK, CTX_ENTRY_LOWER_TT_POS);
+	fpd = dmar_get_bitslice(p_context_e->lo_64, CTX_ENTRY_LOWER_FPD_MASK, CTX_ENTRY_LOWER_FPD_POS);
 	slptptr = p_context_e->lo_64 & CTX_ENTRY_LOWER_SLPTPTR_MASK;
-	aw = GET_BITS(p_context_e->hi_64, CTX_ENTRY_UPPER_AW_MASK, CTX_ENTRY_UPPER_AW_POS);
-	did = GET_BITS(p_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
+	aw = dmar_get_bitslice(p_context_e->hi_64, CTX_ENTRY_UPPER_AW_MASK, CTX_ENTRY_UPPER_AW_POS);
+	did = dmar_get_bitslice(p_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
 
 	pr_err("%s: BDF [%lx:%2lx:%lx]: DID:%3d, TT:%llx, AW:%llx, FPD:%llx, P:%d, SL-PTPTR: 0x%llx.", str, bus, dev, fun, did, tt, aw, fpd, P, slptptr);
 	return 0;
@@ -1321,7 +1309,7 @@ int dump_root_table(uint64_t rta, int dmar_index)
 #define MAX_DID 64
 #define MAX_IOMMU 8
 static bool sanitty_chk_print;
-static int  nr_max_print;
+static uint64_t  nr_max_print;
 struct sanity_chk_domain {
 	uint64_t hit_cnt;
 	uint64_t gpa2hpa_err;
@@ -1359,7 +1347,8 @@ void reset_sanity_data(void)
 
 uint64_t validate_guest_mapping_in_shadow(struct acrn_viommu *viommu, uint16_t did, uint64_t iova, uint64_t gpa, uint64_t size, uint64_t permit)
 {
-	uint64_t hpa_g, hpa_s, shadow_pml4, *pte, pte_size;
+	const uint64_t *pte;
+	uint64_t hpa_g, hpa_s, shadow_pml4, pte_size;
 	int index = viommu->drhd_rt->index;
 	struct acrn_vm *vm = viommu->vm;
 	struct sanity_chk_domain *dom = &(sanity_chk_iommu_unit[index].dom[did]);
@@ -1389,7 +1378,7 @@ uint64_t validate_guest_mapping_in_shadow(struct acrn_viommu *viommu, uint16_t d
 	}
 
 	shadow_pml4 = get_shadow_pml4(viommu, did);
-	pte = pgtable_lookup_entry((uint64_t *)shadow_pml4, iova, &pte_size,  &pgtable_ops);
+	pte = pgtable_lookup_entry((uint64_t *)shadow_pml4, iova, &pte_size, &(viommu->shadow_pgtable));
 	if (pte == NULL) {
 		dom->miss_cnt++;
 		if ((sanitty_chk_print) && (dom->miss_cnt <= nr_max_print)) {
@@ -1450,7 +1439,7 @@ bool verify_guest_pml4_addr(struct acrn_viommu *viommu)
 				p_guest_context_e = &ctp[j];
 				if (p_guest_context_e->lo_64 & 1) {
 
-					guest_did = GET_BITS(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
+					guest_did = dmar_get_bitslice(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
 					guest_pml4 = p_guest_context_e->lo_64 & CTX_ENTRY_LOWER_SLPTPTR_MASK;
 
 					if (viommu->guest_pml4[guest_did] != guest_pml4) {
@@ -1489,7 +1478,7 @@ static void dump_sanity_chk_info(struct acrn_viommu *viommu, uint16_t did, struc
 	}
 }
 
-static void check_shadow_pgtable(int dmar_index, uint16_t did, bool print_err, int max_print)
+static void check_shadow_pgtable(int dmar_index, uint16_t did, bool print_err, uint64_t max_print)
 {
 	int i, index;
 	struct acrn_viommu *viommu;
@@ -1497,7 +1486,7 @@ static void check_shadow_pgtable(int dmar_index, uint16_t did, bool print_err, i
 
 	reset_sanity_data();
 	for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-		viommu = &vdmar_drhd_units[i];
+		viommu = &viommu_units[i];
 		index = viommu->drhd_rt->index;
 		if (!verify_guest_pml4_addr(viommu)) {
 			return;
@@ -1527,7 +1516,7 @@ static void check_shadow_pgtable(int dmar_index, uint16_t did, bool print_err, i
 	dump_sanity_chk_info(viommu, did, dom);
 }
 
-static void check_shadow_pgtable_all(bool print_err, int max_print)
+static void check_shadow_pgtable_all(bool print_err, uint64_t max_print)
 {
 	uint32_t i, index;
 	uint16_t did;
@@ -1540,7 +1529,7 @@ static void check_shadow_pgtable_all(bool print_err, int max_print)
 	nr_max_print = max_print;
 
 	for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-		viommu = &vdmar_drhd_units[i];
+		viommu = &viommu_units[i];
 		index = viommu->drhd_rt->index;
 		if (!verify_guest_pml4_addr(viommu)) {
 			return;
@@ -1554,7 +1543,7 @@ static void check_shadow_pgtable_all(bool print_err, int max_print)
 	}
 
 	for (i = 0; i < plat_dmar_info.drhd_count; i++) {
-		viommu = &vdmar_drhd_units[i];
+		viommu = &viommu_units[i];
 		index = viommu->drhd_rt->index;
 		for (did = 0; did < 128; did++) {
 			if (viommu->guest_pml4[did] != 0UL) {
@@ -1565,12 +1554,13 @@ static void check_shadow_pgtable_all(bool print_err, int max_print)
 	}
 }
 
-static uint32_t record_tbl[MAX_TBL][MAX_TIME_RCD];
-static uint64_t record_index[MAX_TBL];
-static bool record_index_overflow[MAX_TBL];
+#define MAX_TIME_RCD 5000000
+static uint32_t record_tbl[RECORD_MAX_TBL_NUM][MAX_TIME_RCD];
+static uint64_t record_index[RECORD_MAX_TBL_NUM];
+static bool record_index_overflow[RECORD_MAX_TBL_NUM];
 void insert_time(int tbl_i, uint64_t us)
 {
-	if (tbl_i >= MAX_TBL) {
+	if (tbl_i >= RECORD_MAX_TBL_NUM) {
 		pr_err("tbl index %d err, us: %lld", tbl_i, us);
 	}
 
@@ -1584,16 +1574,16 @@ void insert_time(int tbl_i, uint64_t us)
 
 void time_sum(void)
 {
-	uint64_t i, j, sum[MAX_TBL], av[MAX_TBL], max[MAX_TBL], min[MAX_TBL];
+	uint64_t i, j, sum[RECORD_MAX_TBL_NUM], av[RECORD_MAX_TBL_NUM], max[RECORD_MAX_TBL_NUM], min[RECORD_MAX_TBL_NUM];
 
-	for (i = 0; i < MAX_TBL; i++) {
+	for (i = 0; i < RECORD_MAX_TBL_NUM; i++) {
 		min[i] = (uint64_t)-1;
 		max[i] = 0UL;
 		sum[i] = 0UL;
 		av[i] = 0UL;
 	}
 
-	for (i = 0; i < MAX_TBL; i++) {
+	for (i = 0; i < RECORD_MAX_TBL_NUM; i++) {
 		for (j = 0; j < record_index[i]; j++) {
 			sum[i] += record_tbl[i][j];
 
@@ -1608,19 +1598,19 @@ void time_sum(void)
 			av[i] = sum[i]/record_index[i];
 	}
 
-	if (record_index_overflow[H_TBL_MAP] || record_index_overflow[H_TBL_UNMAP] ||record_index_overflow[H_IOTLB_PSI]) {
+	if (record_index_overflow[RECORD_SHADOW_MAP] || record_index_overflow[RECORD_SHADOW_UNMAP] ||record_index_overflow[RECORD_IOTLB]) {
 		pr_err("Index May Overflow in %s: %s, %s: %s, %s: %s",
-			tbl_name[H_TBL_MAP], record_index_overflow[H_TBL_MAP] ? "TRUE" : "FALSE",
-			tbl_name[H_TBL_UNMAP], record_index_overflow[H_TBL_UNMAP] ? "TRUE" : "FALSE",
-			tbl_name[H_IOTLB_PSI], record_index_overflow[H_IOTLB_PSI] ? "TRUE" : "FALSE");
+			tbl_name[RECORD_SHADOW_MAP], record_index_overflow[RECORD_SHADOW_MAP] ? "TRUE" : "FALSE",
+			tbl_name[RECORD_SHADOW_UNMAP], record_index_overflow[RECORD_SHADOW_UNMAP] ? "TRUE" : "FALSE",
+			tbl_name[RECORD_IOTLB], record_index_overflow[RECORD_IOTLB] ? "TRUE" : "FALSE");
 
-	} else if ((record_index[H_TBL_MAP] > 0) && (record_index[H_TBL_UNMAP] > 0) && (record_index[H_IOTLB_PSI] > 0)) {
-		pr_err("Map Percent: %lld%%, Umap Percent: %lld%%.", (sum[H_TBL_MAP] * 100)/sum[H_IOTLB_PSI], (sum[H_TBL_UNMAP] * 100)/sum[H_IOTLB_PSI]);
+	} else if ((record_index[RECORD_SHADOW_MAP] > 0) && (record_index[RECORD_SHADOW_UNMAP] > 0) && (record_index[RECORD_IOTLB] > 0)) {
+		pr_err("Map Percent: %lld%%, Umap Percent: %lld%%.", (sum[RECORD_SHADOW_MAP] * 100)/sum[RECORD_IOTLB], (sum[RECORD_SHADOW_UNMAP] * 100)/sum[RECORD_IOTLB]);
 	} else {
 		pr_err("Info is NOT enough to get time consumed by Map & Unmap.");
 	}
 
-	for (i = 0; i < MAX_TBL; i++) {
+	for (i = 0; i < RECORD_MAX_TBL_NUM; i++) {
 		if (record_index[i] > 0UL)
 			pr_err("%s: Record Index: %lld, av: %lld (us), max: %lld, min: %lld", tbl_name[i], record_index[i], av[i], max[i], min[i]);
 	}
@@ -1650,7 +1640,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 //	pr_err("%s INPUT: op:%d, dmar_index:%d, did:%d, addr:0x%llx, nr_pages:%d", __func__, op, dmar_index, did, addr, nr_pages);
 	if (op == READ_HOST_IOMMU_REG) {
 		for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-			vtd = &vdmar_drhd_units[i];
+			vtd = &viommu_units[i];
 			if (dmar_index == vtd->drhd_rt->index) {
 				iommu = vtd->drhd_rt;
 				break;
@@ -1684,7 +1674,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 		}
 		vtd = NULL;
 		for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-			vtd = &vdmar_drhd_units[i];
+			vtd = &viommu_units[i];
 			if (dmar_index == vtd->drhd_rt->index)
 				break;
 		}
@@ -1705,7 +1695,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 
 		while (addr < addr_end) {
 			pr_err("pgcheck, addr:0x%llx, addr end:0x%llx.",addr, addr_end);
-			pte = pgtable_lookup_entry_d((uint64_t *)pml4, addr, &size,  &pgtable_ops);
+			pte = pgtable_lookup_entry_d((uint64_t *)pml4, addr, &size,  &guest_pgtable);
 			if (pte == NULL) {
 				pr_err("DMAR%d, %sPageTable, mapping of %llx is NOT present, loop:%d",
 					dmar_index, op == GUEST_MAPPING_LOOKUP ? "Guest ": "Shadow ", addr, loop);
@@ -1724,7 +1714,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 	if (op == SHOW_SHADOW_TBL_ADDR) {
 		pr_err("Dump Shadow and Geust PML4:");
 		for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-			vtd = &vdmar_drhd_units[i];
+			vtd = &viommu_units[i];
 			for (j = 0; j < MAX_GUEST_IOMMU_DID; j++) {
 				if ((vtd->guest_pml4[j] == 0UL) && (vtd->shadow_pml4[j] == 0UL)) {
 					continue;
@@ -1742,7 +1732,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 	if (op == DUMP_GUEST_CONTEXT_TBL) {
 		pr_err("Dump Guest Context:");
 		for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-			vtd = &vdmar_drhd_units[i];
+			vtd = &viommu_units[i];
 			dump_root_table(get_guest_rta(vtd), vtd->drhd_rt->index);
 		}
 		return;
@@ -1751,7 +1741,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 	if (op == DUMP_HOST_CONTEXT_TBL) {
 		pr_err("Dump Host Context:");
 		for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-			vtd = &vdmar_drhd_units[i];
+			vtd = &viommu_units[i];
 			dump_root_table(iommu_read64(vtd->drhd_rt, DMAR_RTADDR_REG), vtd->drhd_rt->index);
 		}
 		return;
@@ -1760,7 +1750,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 	if (op == MAP_UNMAP_CNT) {
 		pr_err("Dump Shadow Map and Unmap Counter:");
 		for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
-			vtd = &vdmar_drhd_units[i];
+			vtd = &viommu_units[i];
 			for (j = 0; j < MAX_GUEST_IOMMU_DID; j++) {
 				if ((vtd->map_cnt[j] != 0UL) || (vtd->unmap_cnt[i] != 0UL))
 					pr_err("DMAR%d, DID:%3d, Map count:%8lld, Unmap count:%8lld.",
