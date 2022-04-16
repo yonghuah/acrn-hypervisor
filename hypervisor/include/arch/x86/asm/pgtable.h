@@ -178,7 +178,7 @@ struct pgtable {
 	void (*recover_exe_right)(uint64_t *entry);
 };
 
-static inline bool pgentry_present(struct pgtable *table, uint64_t pte)
+static inline bool pgentry_present(const struct pgtable *table, uint64_t pte)
 {
 	return ((table->pgentry_present_mask & pte) != 0UL);
 }

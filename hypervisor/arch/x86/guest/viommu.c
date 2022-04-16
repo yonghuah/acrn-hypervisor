@@ -49,7 +49,7 @@ typedef uint64_t (*pgtable_mapping_handler)(struct acrn_viommu *viommu, uint16_t
  * hence only 'pgentry_present_mask' is required and initialized, all other fileds
  * are initialized to NULL and shall never be accessed.
  */
-static struct pgtable guest_pgtable = {
+static const struct pgtable guest_pgtable = {
 	.default_access_right = 0UL,
 	.pgentry_present_mask = EPT_RWX,
 	.pool = NULL,
@@ -108,7 +108,7 @@ static inline bool shadow_large_2M_page_support(enum _page_table_level level, __
 	return (level == IA32E_PD);
 }
 
-static inline bool shadow_no_large_page_support(enum _page_table_level level, __unused uint64_t prot)
+static inline bool shadow_no_large_page_support(__unused enum _page_table_level level, __unused uint64_t prot)
 {
 	return false;
 }
@@ -118,22 +118,22 @@ static inline void shadow_nop_recover_exe_right(uint64_t *entry __attribute__((u
 
 static uint32_t viommu_read32(const struct acrn_viommu *viommu, uint32_t offset)
 {
-	return  *((uint32_t *)(hpa2hva(viommu->regs + offset)));
+	return  *((uint32_t *)(viommu->regs + offset));
 }
 
 static uint64_t viommu_read64(const struct acrn_viommu *viommu, uint32_t offset)
 {
-	return *((uint64_t *)(hpa2hva(viommu->regs + offset)));
+	return *((uint64_t *)(viommu->regs + offset));
 }
 
 static void viommu_write32(const struct acrn_viommu *viommu, uint32_t offset, uint32_t value)
 {
-	*((uint32_t *)(hpa2hva(viommu->regs + offset))) = value;
+	*((uint32_t *)(viommu->regs + offset)) = value;
 }
 
 static void viommu_write64(const struct acrn_viommu *viommu, uint32_t offset, uint64_t value)
 {
-	*((uint64_t *)(hpa2hva(viommu->regs + offset))) = value;
+	*((uint64_t *)(viommu->regs + offset)) = value;
 }
 
 static bool is_leaf_entry(uint64_t ept_entry, enum _page_table_level pt_level)
@@ -522,112 +522,84 @@ static uint32_t construct_virtual_did(uint32_t vmid, uint32_t vdid)
 	return vdid; //((1 << 15) | (vmid << REMAPPED_DID_OFFSET) | vdid);
 }
 
+/* get the Guest Root Table Address (HVA) */
 static uint64_t get_guest_rta(struct acrn_viommu *viommu)
 {
-	return viommu_read64(viommu, DMAR_RTADDR_REG);
+	return (uint64_t)gpa2hva(viommu->vm, viommu_read64(viommu, DMAR_RTADDR_REG) & PAGE_MASK);
 }
 
-static int context_cache_inv_device(struct acrn_viommu *vtd, uint32_t did, uint32_t sid, uint32_t fm)
+static int context_cache_inv_device(struct acrn_viommu *viommu, uint32_t did, uint32_t sid, uint32_t fm)
 {
 	int status = 0;
-	int index = vtd->drhd_rt->index;
-	uint16_t bus, devfun;
-	uint16_t guest_did, remapped_did;
-	uint64_t shadow_pml4, guest_pml4;
-	uint16_t i, j, ctx_cnt = 0;
-	struct dmar_entry *guest_root_e;
 	union pci_bdf vbdf;
+	uint16_t bus, devfun, guest_did, remapped_did;
+	uint64_t shadow_pml4, guest_pml4;
+	struct dmar_entry *guest_root_e;
 	struct dmar_entry *p_guest_context_e, *p_shadow_context_e;
 
 	bus = (sid >> 8) & 0xFF;
 	devfun = sid & 0xFF;
-	guest_root_e = (struct dmar_entry *)(get_guest_rta(vtd) & PAGE_MASK) + bus;
-	if (guest_root_e->lo_64 & 0x1) {
-		p_guest_context_e = (struct dmar_entry *) (guest_root_e->lo_64 & PAGE_MASK) + devfun;
-		if (p_guest_context_e->lo_64 & 0x1) {
-			//dump_context_entry("Guest-CTX-e", i, (j >> 3) & 0x1f, j & 0x7, p_guest_context_e);
-			//pr_err("%s, ctx_cnt:%lld.", __func__, ctx_cnt);
-
+	guest_root_e = (struct dmar_entry *)get_guest_rta(viommu) + bus;
+	if (dmar_get_bitslice(guest_root_e->lo_64, ROOT_ENTRY_LOWER_PRESENT_MASK, ROOT_ENTRY_LOWER_PRESENT_POS) != 0UL) {
+		p_guest_context_e = (struct dmar_entry *)gpa2hva(viommu->vm, guest_root_e->lo_64 & PAGE_MASK) + devfun;
+		if (dmar_get_bitslice(p_guest_context_e->lo_64, CTX_ENTRY_LOWER_P_MASK, CTX_ENTRY_LOWER_P_POS) != 0UL) {
 			guest_did = dmar_get_bitslice(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
-			ASSERT(guest_did < MAX_GUEST_IOMMU_DID, "Guest DID overflow"); //this assert check is for did remapping logic
-			#if 0
-			if (guest_did != did) { //need to ignore did input value
-				pr_err("%s, Err input did:%d and guest_did:%d does not match.", __func__, did, guest_did);
-			}
-			#endif
-
-			//if (((cc_inv_g == VTD_INV_DESC_CC_DOMAIN) || (cc_inv_g == VTD_INV_DESC_CC_DEVICE)) && (did != guest_did))
-			//	continue;
-
-			//pr_err("%s, CC_device: did:%lld, sid:[%x:%x:%x]", __func__, VTD_INV_DESC_CC_DID(entry->lo_64), (sid >> 8) & 0xff, (sid >> 3) &0x1f, sid & 0x7);
-			//if ((cc_inv_g == VTD_INV_DESC_CC_DEVICE) && ((did != guest_did) || (((sid >> 8) & 0xFF ) != i) || ((sid & 0xFF) != j)))
-			//if ((cc_inv_g == VTD_INV_DESC_CC_DEVICE) && ((((sid >> 8) & 0xFF ) != i) || ((sid & 0xFF) != j)))
-			//	continue;
+			ASSERT(guest_did < MAX_GUEST_IOMMU_DID, "Guest DID overflow"); /*this assert check is for did remapping logic*/
 
 			/*
 			 * VT-d specification #9.3, Context-entries programmed with the same domain identifier
 			 * must always reference same address translation(SLPTPTR field).
 			 */
-			if (vtd->shadow_pml4[guest_did] == 0UL) {
+			if (viommu->shadow_pml4[guest_did] == 0UL) {
 				/* create IOMMU shadow table for this guest IOMMU domain */
-				shadow_pml4 = (uint64_t)pgtable_create_root(&vtd->shadow_pgtable);
+				shadow_pml4 = (uint64_t)pgtable_create_root(&viommu->shadow_pgtable);
 				if (shadow_pml4 == 0UL) {
+					pr_err("%s, failed to create shadow table for DMAR%d, did:%d.",
+						__func__, viommu->drhd_rt->index, guest_did);
 					status = -1;
-					pr_err("%s, failed to create shadow table for DMAR%d, did:%d.", __func__, index, guest_did);
 					goto exit;
 				}
-				//pr_err("%s, create shadow table for guest vDMAR%d DID=%d, shadow PML4: 0x%llx", __func__, vtd->drhd_rt->index, guest_did, shadow_pml4);
-				vtd->shadow_pml4[guest_did] = shadow_pml4;
+				viommu->shadow_pml4[guest_did] = shadow_pml4;
 			} else {
-				shadow_pml4 = vtd->shadow_pml4[guest_did];
+				shadow_pml4 = viommu->shadow_pml4[guest_did];
 
-				//Unmap all shadow table, but keep shadow PML4 page.
-				//pr_err("%s, Remove shadow mappings for DMAR%d, did:%d.", __func__, index, guest_did);
-				viommu_free_shadow_table(vtd, shadow_pml4);
+				/**
+				 * Remove all shadow table mappings, but keep shadow PML4 page,
+				 * Do shadow table sync later when guest issues global or doamin IOTLB.
+				 **/
+				viommu_free_shadow_table(viommu, shadow_pml4);
 			}
 
 			guest_pml4 = p_guest_context_e->lo_64 & CTX_ENTRY_LOWER_SLPTPTR_MASK;
-			if (guest_pml4 == 0UL) {
-				pr_err("%s, WARNING: Guest PML4 is NULL. vDMAR%d DID=%d, ctx entry: 0x%llx", __func__, vtd->drhd_rt->index, guest_did, p_guest_context_e->lo_64);
-				status = -1;
-				goto exit;
-			}
+			ASSERT(guest_pml4 != 0UL, "");
 
-			if (vtd->guest_pml4[guest_did] == 0UL) {
-				vtd->guest_pml4[guest_did] = (uint64_t)gpa2hva(vtd->vm, guest_pml4);//p_guest_context_e->lo_64 & CTX_ENTRY_LOWER_SLPTPTR_MASK;
-				//pr_err("%s, Store guest PML4 vDMAR%d DID=%d, guest PML4: 0x%llx", __func__, vtd->drhd_rt->index, guest_did, guest_pml4);//vtd->guest_pml4[did]);
-			} else if (((uint64_t)gpa2hva(vtd->vm, guest_pml4)) != vtd->guest_pml4[guest_did]) {
-				pr_err("%s, Guest is trying to update pml4 for did:%d, current guest pml4:0x%llx, cached guest pml4:0x%llx,",
-					__func__, guest_did, guest_pml4, vtd->guest_pml4[guest_did]);
-					vtd->guest_pml4[guest_did] = guest_pml4;
+			if (viommu->guest_pml4[guest_did] == 0UL) {
+				viommu->guest_pml4[guest_did] = (uint64_t)gpa2hva(viommu->vm, guest_pml4);
+			} else if (((uint64_t)gpa2hva(viommu->vm, guest_pml4)) != viommu->guest_pml4[guest_did]) {
+				 /* Guest is trying to invalidate page table for current domain */
+				viommu_free_shadow_table(viommu, viommu->shadow_pml4[guest_did]);
+				viommu->guest_pml4[guest_did] = guest_pml4;
 			}
 
 			vbdf.fields.bus = bus;
 			vbdf.fields.devfun = devfun;
-			p_shadow_context_e = get_shadow_context_entry(vtd, &vbdf);
-			if (p_shadow_context_e != NULL) {
-				/* update native context entry */
-				p_shadow_context_e->lo_64 = p_guest_context_e->lo_64;
-				p_shadow_context_e->lo_64 &= (~CTX_ENTRY_LOWER_SLPTPTR_MASK);
-				#if 1 //use shadow page table
-				p_shadow_context_e->lo_64 |= (shadow_pml4 & CTX_ENTRY_LOWER_SLPTPTR_MASK);
-				#else //use guest page table directly for debug purpose only.
-				p_shadow_context_e->lo_64 |= (guest_pml4 & CTX_ENTRY_LOWER_SLPTPTR_MASK);
-				#endif
+			p_shadow_context_e = get_shadow_context_entry(viommu, &vbdf);
 
-				remapped_did = construct_virtual_did(vtd->vm->vm_id, guest_did);
-				p_shadow_context_e->hi_64 = p_guest_context_e->hi_64;
-				p_shadow_context_e->hi_64 &= (~CTX_ENTRY_UPPER_DID_MASK);
-				p_shadow_context_e->hi_64 |= ((remapped_did << CTX_ENTRY_UPPER_DID_POS) & CTX_ENTRY_UPPER_DID_MASK);
+			/* update shadow context entry */
+			p_shadow_context_e->lo_64 = p_guest_context_e->lo_64;
+			p_shadow_context_e->lo_64 &= (~CTX_ENTRY_LOWER_SLPTPTR_MASK);
+			#if 1 /*use shadow page table*/
+			p_shadow_context_e->lo_64 |= (shadow_pml4 & CTX_ENTRY_LOWER_SLPTPTR_MASK);
+			#else /*use guest page table directly for debug purpose only.*/
+			p_shadow_context_e->lo_64 |= (guest_pml4 & CTX_ENTRY_LOWER_SLPTPTR_MASK);
+			#endif
 
-				iommu_flush_cache(p_shadow_context_e, sizeof(struct dmar_entry));
-				//dump_context_entry("Shadow  CTX", vbdf.bits.b, vbdf.bits.d, vbdf.bits.f, p_shadow_context_e);
-			} else {
-				pr_err("%s, fail to get native context entry, vBDF= [%x:%x:%x]", __func__, vbdf.bits.b, vbdf.bits.d, vbdf.bits.f);
-				status = -1;
-				goto exit;
-			}
+			remapped_did = construct_virtual_did(viommu->vm->vm_id, guest_did);
+			p_shadow_context_e->hi_64 = p_guest_context_e->hi_64;
+			p_shadow_context_e->hi_64 &= (~CTX_ENTRY_UPPER_DID_MASK);
+			p_shadow_context_e->hi_64 |= ((remapped_did << CTX_ENTRY_UPPER_DID_POS) & CTX_ENTRY_UPPER_DID_MASK);
 
+			iommu_flush_cache(p_shadow_context_e, sizeof(struct dmar_entry));
 		}
 	}
 exit:
