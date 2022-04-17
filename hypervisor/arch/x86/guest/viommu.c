@@ -568,15 +568,11 @@ static int create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 
 static void delete_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 {
-	struct page *shadow_pml4_page;
 	struct pgtable *table = &viommu->shadow_pgtable;
 
-	shadow_pml4_page = (struct page *)viommu->shadow_pml4[guest_did];
-	if (shadow_pml4_page != 0UL) {
-		free_shadow_table(viommu, guest_did);
-		free_page(table->pool, shadow_pml4_page);
-		viommu->shadow_pml4[guest_did] = 0UL;
-	}
+	free_shadow_table(viommu, guest_did);
+	free_page(table->pool, (struct page *)viommu->shadow_pml4[guest_did]);
+	viommu->shadow_pml4[guest_did] = 0UL;
 }
 
 static int context_cache_inv_device(struct acrn_viommu *viommu, uint32_t did, uint32_t sid, uint32_t fm)
@@ -771,8 +767,8 @@ static int process_context_cache_desc(struct acrn_viommu *viommu, struct dmar_en
 	case VTD_INV_DESC_CC_DEVICE:
 		did = VTD_INV_DESC_CC_DID(entry->lo_64); /* always be 0 from linux guest. */
 		sid = VTD_INV_DESC_CC_SID(entry->lo_64);
-		pr_err("CC_Device: DMAR%d, did:%llx, : sid:[%x:%x:%x]",
-			viommu->drhd_rt->index, VTD_INV_DESC_CC_DID(entry->lo_64), (sid >> 8) & 0xff, (sid >> 3) &0x1f, sid & 0x7);
+		/*pr_err("CC_Device: DMAR%d, did:%llx, : sid:[%x:%x:%x]",
+			viommu->drhd_rt->index, VTD_INV_DESC_CC_DID(entry->lo_64), (sid >> 8) & 0xff, (sid >> 3) &0x1f, sid & 0x7);*/
 		status = context_cache_inv_device(viommu, did, sid, fm);
 		break;
 
@@ -798,7 +794,7 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 		break;
 
 	case VTD_INV_DESC_IOTLB_DOMAIN:
-		pr_err("IOTLB_Domain: DMAR%d, did:%d.", index, (entry->lo_64 >> 16) & 0xFFFF);
+		/*pr_err("IOTLB_Domain: DMAR%d, did:%d.", index, (entry->lo_64 >> 16) & 0xFFFF);*/
 
 		/*guest page table maybe present when guest issue domain iotlb.*/
 		iotlb_inv_domain(viommu,(entry->lo_64 >> 16) & 0xFFFF);
@@ -1260,7 +1256,17 @@ void init_viommu(struct acrn_vm *vm)
 
 void deinit_viommu(struct acrn_vm *vm)
 {
-	//todo
+	uint32_t i, j;
+	struct acrn_viommu *viommu;
+
+	for (i = 0U; i < plat_dmar_info.drhd_count; i++) {
+		viommu = &viommu_units[i];
+		for (j = 0U; j < MAX_GUEST_IOMMU_DID; j++) {
+			if (viommu->shadow_pml4[j] != 0UL) {
+				delete_shadow_table(viommu, j);
+			}
+		}
+	}
 }
 
 #if SHADOW_DBG

@@ -67,6 +67,7 @@ struct acrn_viommu {
 };
 
 void init_viommu(struct acrn_vm *vm);
+void deinit_viommu(struct acrn_vm *vm);
 void viommu_reserve_buffer_for_shadow_pages(void);
 
 #endif

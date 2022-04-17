@@ -842,6 +842,9 @@ int32_t shutdown_vm(struct acrn_vm *vm)
 	vm->state = VM_POWERED_OFF;
 
 	if (is_service_vm(vm)) {
+#ifdef CONFIG_VIOMMU_ENABLED
+		deinit_viommu(vm);
+#endif
 		sbuf_reset();
 	}
 
