@@ -464,52 +464,24 @@ static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, u
 #endif
 }
 
-static void reset_host_context_table(struct acrn_viommu *viommu)
-{
-	uint64_t rta;
-	int i, j;
-	struct dmar_entry *root_entry, *ctp;
-
-	//Todo: just clear devices assigned to current VM!!!!!!!
-	rta = viommu->drhd_rt->root_table_addr;
-//	pr_err("%s, DMAR%d: RTA: 0x%llx", __func__, dmar_index, rta);
-	root_entry = (struct dmar_entry *)(rta & PAGE_MASK);
-	for (i = 0; i < 3; i++) { //bus
-		if (root_entry[i].lo_64 & 1) {
-			ctp = (struct dmar_entry *)(root_entry[i].lo_64 & PAGE_MASK);
-			for (j = 0; j < 256; j++) {//df
-				memset(&ctp[j], 0, sizeof(struct dmar_entry));
-			}
-		}
-	}
-}
-
-static struct dmar_entry *get_shadow_context_entry(struct acrn_viommu *vtd, union pci_bdf *vbdf)
+static struct dmar_entry *get_shadow_context_entry(struct acrn_viommu *viommu, union pci_bdf *vbdf)
 {
 	uint32_t i;
 	union pci_bdf pbdf;
-	struct acrn_vm *vm = vtd->vm;
+	struct pci_vdev *vdev;
+	struct acrn_vm *vm = viommu->vm;
 	struct acrn_vpci *vpci = &(vm->vpci);
-	struct pci_vdev *vdev;//pci_vdevs[CONFIG_MAX_PCI_DEV_NUM];
-	uint64_t native_rta = vtd->drhd_rt->root_table_addr;
+	uint64_t native_rta = viommu->drhd_rt->root_table_addr;
 	struct dmar_entry *p_rta, *p_root_e, *p_context, *p_context_e = NULL;
 
-	p_rta = (struct dmar_entry *)vtd->drhd_rt->root_table_addr;
-//	pr_err("%s enter, vBDF = [%x:%x:%x].", __func__, vbdf->bits.b, vbdf->bits.d, vbdf->bits.f);
-
-	//use pci_find_vdev() ?
+	p_rta = (struct dmar_entry *)viommu->drhd_rt->root_table_addr;
 	for (i = 0; i < vpci->pci_vdev_cnt; i++) {
 		vdev =&(vpci->pci_vdevs[i]);
-		if (vdev->pdev->drhd_index != vtd->drhd_rt->index) {
-		//	pr_err("vBDF[%d:%d:%d] belongs to DMAR%d, current DMAR index:%d", vbdf->bits.d, vbdf->bits.d, vbdf->bits.f, vdev->pdev->drhd_index, vtd->drhd_rt->index);
-		}
-
 		if ((vbdf->bits.b == vdev->bdf.bits.b) &&
-			(vbdf->bits.d == vdev->bdf.bits.d) && (vbdf->bits.f == vdev->bdf.bits.f)) {
+				(vbdf->bits.d == vdev->bdf.bits.d) &&
+				(vbdf->bits.f == vdev->bdf.bits.f)) {
 
 			memcpy_s(&pbdf, sizeof(union pci_bdf), &(vdev->pdev->bdf), sizeof(union pci_bdf));
-			//pr_err("%s, vBDF = %d:%d:%d, pBDF = %d:%d:%d., search native context entry...",__func__,
-			//	vbdf->bits.b, vbdf->bits.d, vbdf->bits.f, pbdf.bits.b, pbdf.bits.d, pbdf.bits.f);
 
 			p_root_e = p_rta + pbdf.fields.bus;
 			ASSERT(((p_root_e->lo_64 & 0x1) == 1), "Invalid Root Entry.");
@@ -638,8 +610,6 @@ static int context_cache_inv_global(struct acrn_viommu *viommu, uint32_t fm)
 	uint16_t bus, devfun;
 	uint32_t guest_did, sid;
 	struct dmar_entry *root_entry, *ctp, *context_e;
-
-	reset_host_context_table(viommu);
 
 	/* delete all shadow tables in current vIOMMU scope. */
 	for (guest_did = 0; guest_did < MAX_GUEST_IOMMU_DID; guest_did++) {
