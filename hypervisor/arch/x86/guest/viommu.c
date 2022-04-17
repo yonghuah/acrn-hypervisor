@@ -231,36 +231,13 @@ void init_shadow_pgtable(struct acrn_viommu *viommu)
 void viommu_shadow_add_mr(struct acrn_viommu *vdmar, uint64_t *pml4_page,
 	uint64_t hpa, uint64_t iova, uint64_t size, uint64_t prot)
 {
-
-//	dev_dbg(DBG_LEVEL_EPT, "%s, vm[%d] hpa: 0x%016lx gpa: 0x%016lx size: 0x%016lx prot: 0x%016x\n",
-//			__func__, vm->vm_id, hpa, gpa, size, prot);
-
-//	pr_err("%s, shadow pml4:%llx, hpa: 0x%llx iova: 0x%llx size: 0x%lx prot: 0x%llx\n",
-//			__func__, pml4_page, hpa, iova, size, prot);
-
-//	spinlock_obtain(&vm->ept_lock);
-
 	pgtable_add_map(pml4_page, hpa, iova, size, prot, &vdmar->shadow_pgtable);
-
-//	spinlock_release(&vm->ept_lock);
-
-	//ept_flush_guest(vm);
-
 }
 
 void viommu_shadow_del_mr(struct acrn_viommu *vdmar, uint64_t *pml4_page, uint64_t iova, uint64_t size)
 {
-	//pr_err("%s,vm[%d] pml4:%llx, iova 0x%lx size 0x%lx\n", __func__, vdmar->vm->vm_id, pml4_page, iova, size);
-
-	//spinlock_obtain(&vm->ept_lock);
-
 	pgtable_modify_or_del_map(pml4_page, iova, size, 0UL, 0UL, &(vdmar->shadow_pgtable), MR_DEL);
-
-	//spinlock_release(&vm->ept_lock);
-
-	//ept_flush_guest(vm);
 }
-
 
 /*
  * @brief Release all pages except the PML4E page of a shadow table 
@@ -447,12 +424,6 @@ static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, u
 				pr_err("%s, DMAR%d, did:%d, Invalid Guest PTE:0x%llx.", __func__, viommu->drhd_rt->index, did, *guest_pte);
 			}
 			req_size = (iova + pte_size <= iova_end) ? pte_size : iova_end - iova;
-			#if 0
-			if (req_size > PTE_SIZE) {
-				pr_err("%s, loop:%d, DMAR%d, did:%d, REQ addr:%llx, REQ size:%llx, iova:%llx, iova_end:%llx, sync_size:%llx",
-					__func__, loop, viommu->drhd_rt->index, did, addr, size, iova, iova_end, req_size);
-			}
-			#endif
 			synced_size = shadow_sync(viommu, did, iova, gpa, req_size, permit);
 		}
 		iova += synced_size;
@@ -497,11 +468,11 @@ static struct dmar_entry *get_shadow_context_entry(struct acrn_viommu *viommu, u
 	return p_context_e;
 }
 
-#define REMAPPED_DID_OFFSET 11 /* Low 11 bits are reserved for guest DID, mask:0x7FF */
-static uint32_t construct_virtual_did(uint32_t vmid, uint32_t vdid)
+/* support vIOMMU only for service VM, reserve some DID number for hypervisor */
+#define HV_RSV_DID_NUM 8U
+static uint32_t remap_did(__unused struct acrn_viommu *viommu, uint32_t guest_did)
 {
-//	return ((1 << 15) | (vmid << REMAPPED_DID_OFFSET) | vdid);
-	return vdid; //((1 << 15) | (vmid << REMAPPED_DID_OFFSET) | vdid);
+	return (guest_did + HV_RSV_DID_NUM);
 }
 
 /* get the Guest Root Table Address (HVA) */
@@ -573,7 +544,7 @@ static int context_cache_inv_device(struct acrn_viommu *viommu, uint32_t did, ui
 			} else if (((uint64_t)gpa2hva(viommu->vm, guest_pml4)) != viommu->guest_pml4[guest_did]) {
 				 /* Guest is trying to invalidate page table for current domain */
 				pr_err("DMAR%d, DID: Re-Delete shadow pml4:%llx", viommu->drhd_rt->index, guest_did, shadow_pml4);
-				//free_shadow_table(viommu, viommu->shadow_pml4[guest_did]);
+				free_shadow_table(viommu, guest_did);
 				viommu->guest_pml4[guest_did] = guest_pml4;
 			}
 
@@ -591,7 +562,7 @@ static int context_cache_inv_device(struct acrn_viommu *viommu, uint32_t did, ui
 				p_shadow_context_e->lo_64 |= (guest_pml4 & CTX_ENTRY_LOWER_SLPTPTR_MASK);
 				#endif
 
-				remapped_did = construct_virtual_did(viommu->vm->vm_id, guest_did);
+				remapped_did = remap_did(viommu, guest_did);
 				p_shadow_context_e->hi_64 = p_guest_context_e->hi_64;
 				p_shadow_context_e->hi_64 &= (~CTX_ENTRY_UPPER_DID_MASK);
 				p_shadow_context_e->hi_64 |= ((remapped_did << CTX_ENTRY_UPPER_DID_POS) & CTX_ENTRY_UPPER_DID_MASK);
@@ -604,7 +575,6 @@ static int context_cache_inv_device(struct acrn_viommu *viommu, uint32_t did, ui
 	return status;
 }
 
-/* For Linux guest case, there are not any valid context entries in root table when doing CC_Global. */
 static int context_cache_inv_global(struct acrn_viommu *viommu, uint32_t fm)
 {
 	uint16_t bus, devfun;
@@ -622,7 +592,10 @@ static int context_cache_inv_global(struct acrn_viommu *viommu, uint32_t fm)
 	/* reset all previous stored guest PML4 pointers */
 	memset((void *)&viommu->guest_pml4[0], 0, sizeof(uint64_t) * (MAX_GUEST_IOMMU_DID));
 
-	/* walk through guest root table */
+	/*
+	 * walk through guest root table, for Linux guest case, all context entries
+	 * in root table are invalid when doing CC_Global.
+	 */
 	root_entry = (struct dmar_entry *)(get_guest_rta(viommu));
 	for (bus = 0; bus < 256; bus++) {
 		if (dmar_get_bitslice(root_entry[bus].lo_64, ROOT_ENTRY_LOWER_PRESENT_MASK,
@@ -661,7 +634,6 @@ static int iotlb_inv_domain(struct acrn_viommu *viommu, uint32_t did)
 
 		walk_guest_pgtable(viommu, did, shadow_sync_handler);
 	}
-	
 	return 0;	
 }
 
@@ -749,13 +721,24 @@ static int process_context_cache_desc(struct acrn_viommu *viommu, struct dmar_en
 	return status;
 }
 
+static void remap_iotlb_desc_did(struct acrn_viommu *viommu, struct dmar_entry *iotlb_entry, uint32_t guest_did)
+{
+	uint32_t remapped_did = remap_did(viommu, guest_did);
+
+	remapped_did &= 0xFFFF; /* Max bit width of DID is 16 */
+	iotlb_entry->lo_64 &= ~(IOTLB_INV_LOWER_DID_MASK);
+	iotlb_entry->lo_64 |= (remapped_did << IOTLB_INV_LOWER_DID_POS);
+}
+
 /* vt-d spec: 6.5.2.3 IOTLB Invalidate Descriptor */
 static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *entry)
 {
 	bool write_iqt = true;
+	uint32_t guest_did;
 	struct dmar_entry iotlb_desc;
 	int index = viommu->drhd_rt->index;
 
+	guest_did = VTD_INV_DESC_IOTLB_DID(entry->lo_64);
 	switch (entry->lo_64 & VTD_INV_DESC_IOTLB_G) {
 	case VTD_INV_DESC_IOTLB_GLOBAL:
 		pr_err("IOTLB_Global: DMAR%d.", index);
@@ -764,10 +747,11 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 		break;
 
 	case VTD_INV_DESC_IOTLB_DOMAIN:
-		/*pr_err("IOTLB_Domain: DMAR%d, did:%d.", index, (entry->lo_64 >> 16) & 0xFFFF);*/
+		/*pr_err("IOTLB_Domain: DMAR%d, did:%d.", index, guest_did);*/
 
 		/*guest page table maybe present when guest issue domain iotlb.*/
-		iotlb_inv_domain(viommu,(entry->lo_64 >> 16) & 0xFFFF);
+		iotlb_inv_domain(viommu, guest_did);
+		remap_iotlb_desc_did(viommu, entry, guest_did);
 		break;
 
 	case VTD_INV_DESC_IOTLB_PAGE:
@@ -777,6 +761,7 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 		}
 
 		iotlb_inv_psi(viommu, entry);
+		remap_iotlb_desc_did(viommu, entry, guest_did);
 		if (!(viommu->drhd_rt->cap & VTD_CAP_PSI)) { // No PSI support on host
 			pr_err("%s, DMAR%d, IOTLB_PSI(Not support Natively), did:%d, iova:0x%llx, pages:%d.",
 				__func__, index, (entry->lo_64 >> 16) & 0xFFFF, entry->hi_64 & (~0xfff), 1 << (entry->hi_64 & 0x3f));
@@ -785,6 +770,7 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 			iotlb_desc.lo_64 = DMA_IOTLB_DR | DMA_IOTLB_DW | DMA_IOTLB_DOMAIN_INVL| DMAR_INV_IOTLB_DESC;
 			iotlb_desc.lo_64 |= (entry->lo_64 & IOTLB_INV_LOWER_DID_MASK);
 			iotlb_desc.hi_64 = 0UL;
+			remap_iotlb_desc_did(viommu, &iotlb_desc, guest_did);
 			dmar_issue_qi_request(viommu->drhd_rt, iotlb_desc);
 			write_iqt = false; /* caller does not need to issue more IQ request for this flush.*/
 		}
@@ -1462,7 +1448,6 @@ bool verify_guest_pml4_addr(struct acrn_viommu *viommu)
 	}
 
 exit:
-//	pr_err("%s, DMAR%d done %d context entries has been detected!\n", __func__, vtd->drhd_rt->index, ctx_cnt);
 	return status;
 }
 
