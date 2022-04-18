@@ -385,15 +385,6 @@ static int32_t dmar_register_hrhd(struct dmar_drhd_rt *dmar_unit)
 	dmar_unit->root_table_addr = hva2hpa(get_root_table(dmar_unit->index));
 	dmar_unit->ir_table_addr = hva2hpa(get_ir_table(dmar_unit->index));
 
-#if 1//DBG_IOMMU
-//	pr_err("======>version:0x%x, cap:0x%lx, ecap:0x%lx",
-		//iommu_read32(dmar_unit, DMAR_VER_REG), dmar_unit->cap, dmar_unit->ecap);
-//	pr_err("======>sagaw:0x%x, msagaw:0x%x, iotlb offset 0x%x",
-//		iommu_cap_sagaw(dmar_unit->cap), dmar_unit->cap_msagaw, dmar_unit->ecap_iotlb_offset);
-
-	//dmar_unit_show_capability(dmar_unit);
-#endif
-
 	/* check capability */
 	if ((iommu_cap_super_page_val(dmar_unit->cap) & 0x1U) == 0U) {
 		pr_fatal("%s: dmar uint doesn't support 2MB page!\n", __func__);
@@ -413,7 +404,6 @@ static int32_t dmar_register_hrhd(struct dmar_drhd_rt *dmar_unit)
 	} else {
 		if ((iommu_ecap_c(dmar_unit->ecap) == 0U) && (!dmar_unit->drhd->ignore)) {
 			iommu_page_walk_coherent = false;
-			pr_err("%s, page_walk_coherent is not supported on DMAR%d.", __func__, dmar_unit->index);
 		}
 		dmar_disable_translation(dmar_unit);
 	}

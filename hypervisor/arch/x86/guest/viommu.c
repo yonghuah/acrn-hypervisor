@@ -946,76 +946,53 @@ int handle_gcmd(struct acrn_viommu *viommu)
 	return status;
 }
 
+#if SHADOW_DBG
+#define EMUL_TBL_NUM 32U
+static uint32_t emulated_regs[EMUL_TBL_NUM] = {
+	DMAR_VER_REG,
+	DMAR_CAP_REG,
+	DMAR_ECAP_REG,
+	DMAR_GSTS_REG,
+	DMAR_FSTS_REG,
+	DMAR_FECTL_REG,
+	DMAR_IQT_REG,
+	DMAR_IQH_REG,
+	DMAR_IQA_REG
+};
+
+bool is_emulated_access(uint32_t offset)
+{
+	int i;
+
+	for (i = 0; i < EMUL_TBL_NUM; i++) {
+		if (emulated_regs[i] == offset)
+			return true;
+	}
+	return false;
+}
+#endif
+
 #define MAX_DMAR_REG_SPACE 0x1000
 static uint64_t viommu_mmio_read(struct acrn_viommu *viommu, struct acrn_mmio_request *mmio)
 {
-	struct dmar_drhd_rt *dmar_unit= viommu->drhd_rt;
-	int index = dmar_unit->index;
-	uint32_t offset = mmio->address - dmar_unit->drhd->reg_base_addr;
-	uint64_t value;
+	uint64_t value = 0UL;
+	uint32_t offset = mmio->address - viommu->drhd_rt->drhd->reg_base_addr;
 
-	if (offset + mmio->size > MAX_DMAR_REG_SPACE) {
-		pr_err("%s, DMAR%d offset: 0x%x, size: %d overflow.", __func__, dmar_unit->index, offset, mmio->size);
-		value = 0UL;
-	}
-
-	spinlock_obtain(&viommu->lock);
-
-	switch (offset) {
-	case DMAR_VER_REG:
-		value = viommu_read64(viommu, offset); /*todo: move to default case */
-		break;
-
-	case DMAR_CAP_REG: /*todo: move to default case */
-		value = viommu_read64(viommu, offset);
-		break;
-
-	case DMAR_ECAP_REG:
-		value = viommu_read64(viommu, offset); /*todo: move to default case */
-		break;
-
-	case DMAR_GSTS_REG:
-		value = viommu_read32(viommu, offset); /*todo: move to default case */
-		//pr_err("%s,DMAR%d,  GSTS:%llx", __func__, index, value);
-		break;
-	case DMAR_FSTS_REG:
-		value = viommu_read32(viommu, offset);
-		//pr_err("%s,DMAR%d,  FSTS:%llx", __func__, index, value);
-		break;
-
-	case DMAR_FECTL_REG:
-		value = viommu_read32(viommu, offset);
-		//pr_err("%s,DMAR%d,  FECTL:%llx", __func__, index, value);
-		break;
-
-	case DMAR_IQT_REG:
-		value = viommu_read64(viommu, DMAR_IQT_REG);
-		//pr_err("%s, DMAR%d,  tail:%lx", __func__, index, value);
-		break;
-
-	case DMAR_IQH_REG:
-		value = viommu_read64(viommu, DMAR_IQH_REG);
-		//pr_err("%s, DMAR%d,  head:%lx", __func__, index, value);
-		break;
-
-	case DMAR_IQA_REG:
-		value = viommu_read64(viommu, DMAR_IQA_REG);
-		//pr_err("%s, DMAR%d,  IQA:%llx", __func__, index, value);
-		break;
-
-	default:
-		if (mmio->size == 4U) {
-			value = iommu_read32(dmar_unit, offset);
-		} else {
-			value = iommu_read64(dmar_unit, offset);
+	if (offset + mmio->size <= MAX_DMAR_REG_SPACE) {
+#if SHADOW_DBG
+		if (!is_emulated_access(offset)) {
+			pr_err("%s, WARNING: offset:%x is NOT emulated yet!", __func__, offset);
 		}
-		pr_err("%s, DMAR%d, Read from native: offset:0x%x, host value:0x%llx", __func__, index, offset, value);
-	}
-
-	spinlock_release(&viommu->lock);
-
-	if ((offset != DMAR_FSTS_REG) || (value != 0U)) {
-		dev_dbg(DBG_LEVEL_VIOMMU, "rd dmar%d offset %x size %x value %llx", dmar_unit->index, offset, mmio->size, value);
+#endif
+		spinlock_obtain(&viommu->lock);
+		if (mmio->size == 4U) {
+			value = viommu_read32(viommu, offset);
+		} else if (mmio->size == 8U) {
+			value = viommu_read64(viommu, offset);
+		}
+		spinlock_release(&viommu->lock);
+	} else {
+		pr_err("%s, Error: offset:%x overflow!", __func__, offset);
 	}
 
 	return value;
