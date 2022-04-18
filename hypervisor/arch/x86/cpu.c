@@ -286,7 +286,8 @@ void init_pcpu_post(uint16_t pcpu_id)
 		 * Reserve memory from platform E820 for EPT 4K pages for all VMs
 		 */
 		reserve_buffer_for_ept_pages();
-#if SHADOW_EN
+
+#ifdef CONFIG_VIOMMU_ENABLED
 		viommu_reserve_buffer_for_shadow_pages();
 #endif
 

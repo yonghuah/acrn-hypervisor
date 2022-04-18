@@ -7,8 +7,6 @@
 #ifndef VIOMMU_H
 #define VIOMMU_H
 
-#define SHADOW_EN 1
-
 #define VTD_CAP_ESIRTPS		(1UL << 62)
 #define VTD_CAP_FL5LP		(1UL << 60)
 #define VTD_CAP_PI		(1UL << 59)
@@ -41,6 +39,7 @@
 /* Nuber of Fault Record Registers */
 #define VTD_FCRD_REG_NR		(1UL)
 
+#define VIOMMU_DEBUG 1
 
 #define MAX_GUEST_IOMMU_DID 128
 struct acrn_viommu {
@@ -55,12 +54,12 @@ struct acrn_viommu {
 	uint32_t frcd_index;
 	uint32_t frcd_offset;
 
-#ifdef CONFIG_VIOMMU_ENABLED
 	uint8_t regs[4096];
 	struct pgtable shadow_pgtable;
 	uint64_t shadow_pml4[MAX_GUEST_IOMMU_DID];
 	uint64_t guest_pml4[MAX_GUEST_IOMMU_DID];
-	/*debug*/
+
+#if VIOMMU_DEBUG
 	uint64_t map_cnt[MAX_GUEST_IOMMU_DID];
 	uint64_t unmap_cnt[MAX_GUEST_IOMMU_DID];
 #endif
@@ -69,5 +68,4 @@ struct acrn_viommu {
 void init_viommu(struct acrn_vm *vm);
 void deinit_viommu(struct acrn_vm *vm);
 void viommu_reserve_buffer_for_shadow_pages(void);
-
 #endif
