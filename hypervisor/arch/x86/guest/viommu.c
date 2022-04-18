@@ -891,7 +891,7 @@ int handle_gcmd(struct acrn_viommu *viommu)
 	v_gsts = viommu_read32(viommu, DMAR_GSTS_REG);
 	req_bits = v_gsts ^ gcmd;
 
-	//pr_err("%s, DMAR%d, gcmd:%lx, v_gsts:%lx, req_bits:%lx", __func__, index, gcmd, v_gsts, req_bits);
+	/*pr_err("%s, DMAR%d, gcmd:%lx, v_gsts:%lx, req_bits:%lx", __func__, index, gcmd, v_gsts, req_bits);*/
 	ASSERT(((req_bits & UNSUPPORTED_GCMD) == 0U), "unsupported GCMD bits.");
 
 	p_gsts = iommu_read32(dmar_unit, DMAR_GSTS_REG);
@@ -899,14 +899,12 @@ int handle_gcmd(struct acrn_viommu *viommu)
 		if (gcmd & DMA_GCMD_TE) {
 			if ((p_gsts & DMA_GSTS_TES)) {
 				v_gsts |= DMA_GSTS_TES;
-				//pr_err("%s, DMAR%d, TE is enabled.", __func__, index);
 			} else
 				pr_err("%s, DMAR%d, native TE has NOT been enabled..", __func__, index);
 
 		} else {
 			/* guest is trying to disable TE */
 			v_gsts &= (~DMA_GSTS_TES);
-			//pr_err("%s, DMAR%d, TE is Disabled.", __func__, index);
 		}
 	}
 
@@ -914,13 +912,11 @@ int handle_gcmd(struct acrn_viommu *viommu)
 		if (gcmd & DMA_GCMD_QIE) {
 			if (p_gsts & DMA_GSTS_QIES) {
 				v_gsts |= DMA_GSTS_QIES;
-				//pr_err("%s, DMAR%d,  QIE is Enabled.", __func__, index);
 			} else {
 				pr_err("%s, DMAR%d, native QIE has NOT been enabled..", __func__, index);
 			}
 		} else {
 			v_gsts &= (~DMA_GSTS_QIES);
-			//pr_err("%s, DMAR%d,  QIE is Disabled.", __func__, index);
 		}
 	}
 
@@ -939,7 +935,7 @@ int handle_gcmd(struct acrn_viommu *viommu)
 
 	if (req_bits & DMA_GCMD_WBF) {
 		pr_err("%s, DMAR%d, WBF.", __func__, index);
-		v_gsts |= (p_gsts & DMA_GSTS_WBFS); // todo double check it.
+		v_gsts |= (p_gsts & DMA_GSTS_WBFS); /* Todo: to be double checked */
 	}
 
 	viommu_write32(viommu, DMAR_GSTS_REG, v_gsts);
@@ -1000,24 +996,12 @@ static uint64_t viommu_mmio_read(struct acrn_viommu *viommu, struct acrn_mmio_re
 
 static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_request *mmio)
 {
-	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
-	uint32_t offset = mmio->address - dmar_unit->drhd->reg_base_addr;
-	int index = dmar_unit->index;
-	bool write_reg = false;
 	uint32_t v_gsts;
 	uint64_t iq_addr;
-
-	if (offset + mmio->size > MAX_DMAR_REG_SPACE) {
-		pr_err("%s, DMAR%d offset: 0x%x, size: %d overflow.", __func__, index, offset, mmio->size);
-		goto exit;
-	}
-
-	//if (offset != DMAR_IQT_REG) {
-	//pr_err("%s --> DMAR%d offset: 0x%x, size: %d,  value: 0x%llx", __func__, index, offset, mmio->size, mmio->value);
-	//}
+	int index = viommu->drhd_rt->index;
+	uint32_t offset = mmio->address - viommu->drhd_rt->drhd->reg_base_addr;
 
 	spinlock_obtain(&viommu->lock);
-
 	switch (offset) {
 	case DMAR_GCMD_REG:
 		viommu_write32(viommu, offset, (uint32_t)mmio->value);
@@ -1034,30 +1018,20 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 		break;
 
 	case DMAR_FECTL_REG:
-//		viommu_write32(viommu, offset, (uint32_t)mmio->value);
 		handle_fectl_write(viommu, mmio->value);
 		break;
 
 	case DMAR_FEDATA_REG:
 		viommu_write32(viommu, offset, (uint32_t)mmio->value);
-		//pr_err("%s, DMAR%d, write Fault Event DATA, data:%llx", __func__, index, mmio->value);
 		break;
 
 	case DMAR_FEADDR_REG:
 		viommu_write32(viommu, offset, (uint32_t)mmio->value);
-		//pr_err("%s, DMAR%d, write Fault Event Addr, addr:%llx", __func__, index, mmio->value);
 		break;
 
 	case DMAR_FEUADDR_REG:
 		viommu_write32(viommu, offset, (uint32_t)mmio->value);
-		//pr_err("%s, DMAR%d, write Fault Event Addr Upper, addr_upper:%llx", __func__, index, mmio->value);
 		break;
-#if 0
-	case DMAR_PMEN_REG: /* Protected Memory Enable */
-		viommu_write32(viommu, offset, (uint32_t)mmio->value);
-		write_reg = false;
-		break;
-#endif
 
 	case DMAR_IQT_REG:
 		v_gsts = viommu_read32(viommu, DMAR_GSTS_REG);
@@ -1071,7 +1045,6 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 			/*Todo: Inject execepton to guest for this case? */
 			//pr_err("%s, DMAR%d:  Can't write IQT as QIE is NOT enabled. guest GSTS:%lx", __func__, index, v_gsts);
 		}
-		write_reg = false;
 		break;
 
 	case DMAR_IQA_REG:
@@ -1081,31 +1054,16 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 		viommu->qi_queue = (uint64_t)gpa2hva(viommu->vm, iq_addr);
 		viommu->qi_dw= IQ_QUEUE_DW(iq_addr);
 		viommu->qi_queue_size = (PAGE_SIZE) << (iq_addr & IQ_QUEUE_QS_MASK);
-		pr_err("%s, DMAR%d, IQA:%llx, DW:%llx, QS:%llx.", __func__, index, iq_addr, viommu->qi_dw, viommu->qi_queue_size);
 		viommu_write64(viommu, DMAR_IQH_REG, 0UL);
 		viommu_write64(viommu, DMAR_IQT_REG, 0UL);
 
-		/* Don't write QI Addr register */
-		write_reg = false;
 		break;
 
 	default:
-		pr_err("%s, DMAR%d,  Unhandled Write offset:0x%x, value:0x%llx", __func__, index, offset, mmio->value);
+		pr_err("%s, DMAR%d, ERROR: Unhandled Write offset:0x%x, value:0x%llx", __func__, index, offset, mmio->value);
 		break;
 	}
-
-	if (write_reg) {
-		pr_err("%s, DMAR%d,  WARNING: Write-thru offset:0x%x, value:0x%llx", __func__, index, offset, mmio->value);
-		if (mmio->size == 4U) {
-			iommu_write32(dmar_unit, offset, (uint32_t)mmio->value);
-		} else {
-			iommu_write64(dmar_unit, offset, mmio->value);
-		}
-	}
-
 	spinlock_release(&viommu->lock);
-exit:
-	return;
 }
 
 static int32_t viommu_mmio_handler(struct io_request *io_req, void *private_data)
@@ -1128,34 +1086,35 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
 	int index = dmar_unit->index;
 
-	/* Version */
+	/* version */
 	viommu_write32(viommu, DMAR_VER_REG, iommu_read32(dmar_unit, DMAR_VER_REG));
-	pr_err("%s, DMAR%d: VT-d VER:%lx (Maj:bit7~4, Min:bit3~0)",
-		__func__, index, viommu_read64(viommu, DMAR_VER_REG));
+	/*pr_err("%s, DMAR%d: VT-d VER:%lx (Maj:bit7~4, Min:bit3~0)",
+		__func__, index, viommu_read64(viommu, DMAR_VER_REG));*/
 
-	/* Capability */
+	/* capability */
 	val64 = dmar_unit->cap;
-	val64 &= (~(VTD_CAP_ESIRTPS | VTD_CAP_FL5LP | VTD_CAP_PI | VTD_CAP_FL1GP | VTD_CAP_PHMR | VTD_CAP_PLMR | VTD_CAP_AFL)); /* Always clear bits. */
+	 /* Always clear bits. */
+	val64 &= (~(VTD_CAP_ESIRTPS | VTD_CAP_FL5LP | VTD_CAP_PI | VTD_CAP_FL1GP | VTD_CAP_PHMR | VTD_CAP_PLMR | VTD_CAP_AFL));
 	val64 |= (VTD_CAP_PSI | VTD_CAP_CM); /* Always set capability bits */
 
-	/* Set number of fault registers */
+	/* set number of fault registers */
 	val64 = dmar_set_bitslice(val64, VTD_CAP_NFR_MASK, VTD_CAP_NFR_POS, VTD_FCRD_REG_NR - 1U);
 	viommu->frcd_index = 0U;
 	viommu->frcd_offset = dmar_get_bitslice(val64,VTD_CAP_FRO_MASK, VTD_CAP_FRO_POS);
 
 	viommu_write64(viommu, DMAR_CAP_REG, val64);
-	pr_err("%s, DMAR%d: Host cap: %-16llx Guest cap: %-16llx, frcd_offset:%lx", __func__,
-		index, dmar_unit->cap, viommu_read64(viommu, DMAR_CAP_REG), viommu->frcd_offset);
+	/*pr_err("%s, DMAR%d: Host cap: %-16llx Guest cap: %-16llx, frcd_offset:%lx", __func__,
+		index, dmar_unit->cap, viommu_read64(viommu, DMAR_CAP_REG), viommu->frcd_offset);*/
 
-	/* Extend Capability */
+	/* extend Capability */
 	val64 = dmar_unit->ecap;
-	/* Expose below extend capability bits only */
+	/* expose below extend capability bits only */
 	val64 &= (VTD_ECAP_SC | VTD_ECAP_DT | VTD_ECAP_QI | VTD_ECAP_C);
 	viommu_write64(viommu, DMAR_ECAP_REG, val64);
-	pr_err("%s, DMAR%d: Host ecap: %-16llx Guest ecap: %-16llx", __func__,
-		index, dmar_unit->ecap, viommu_read64(viommu, DMAR_ECAP_REG));
+	/*pr_err("%s, DMAR%d: Host ecap: %-16llx Guest ecap: %-16llx", __func__,
+		index, dmar_unit->ecap, viommu_read64(viommu, DMAR_ECAP_REG));*/
 
-	/* Initialize FSTS */
+	/* initialize FSTS */
 	viommu_write32(viommu, DMAR_FSTS_REG, 0U);
 }
 
