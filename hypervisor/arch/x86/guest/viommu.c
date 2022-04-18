@@ -623,7 +623,7 @@ static int iotlb_inv_domain(struct acrn_viommu *viommu, uint32_t did)
 {
 	uint64_t guest_pml4, shadow_pml4;
 	/*int index = viommu->drhd_rt->index;*/
-	
+
 	guest_pml4 = get_guest_pml4(viommu, did);
 	shadow_pml4 = get_shadow_pml4(viommu, did);
 
@@ -634,7 +634,7 @@ static int iotlb_inv_domain(struct acrn_viommu *viommu, uint32_t did)
 
 		walk_guest_pgtable(viommu, did, shadow_sync_handler);
 	}
-	return 0;	
+	return 0;
 }
 
 static int iotlb_inv_global(struct acrn_viommu *viommu)
@@ -642,7 +642,7 @@ static int iotlb_inv_global(struct acrn_viommu *viommu)
 	uint32_t did;
 	int index = viommu->drhd_rt->index;
 	uint64_t guest_pml4, shadow_pml4;
-	
+
 	for (did = 0; did < MAX_GUEST_IOMMU_DID; did++) {
 		guest_pml4 = get_guest_pml4(viommu, did);
 		shadow_pml4 = viommu->shadow_pml4[did];
@@ -656,7 +656,7 @@ static int iotlb_inv_global(struct acrn_viommu *viommu)
 				__func__, index, did, guest_pml4, shadow_pml4);
 			return -1;
 		}
-		
+
 		iotlb_inv_domain(viommu, did);
 	}
 	return 0;
@@ -673,7 +673,7 @@ static int iotlb_inv_psi(struct acrn_viommu *viommu, struct dmar_entry *iotlb_in
 	addr = VTD_INV_DESC_IOTLB_ADDR(iotlb_inv_desc->hi_64);
 	am = VTD_INV_DESC_IOTLB_AM(iotlb_inv_desc->hi_64);
 	size = ((1 << am) << 12);
-	
+
 	if (did >= MAX_GUEST_IOMMU_DID) {
 		pr_err("%s, Can't support guest did:%d.\n", __func__, did);
 		return -1;
@@ -684,8 +684,8 @@ static int iotlb_inv_psi(struct acrn_viommu *viommu, struct dmar_entry *iotlb_in
 	if ((guest_pml4 != 0UL) && (shadow_pml4 != 0UL)) {
 		walk_guest_pgtable_range(viommu, did, addr, size, shadow_sync_handler);
 	}
-	
-	return status;	
+
+	return status;
 }
 
 static int process_context_cache_desc(struct acrn_viommu *viommu, struct dmar_entry *entry)
@@ -1759,7 +1759,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 
 		while (addr < addr_end) {
 			pr_err("pgcheck, addr:0x%llx, addr end:0x%llx.",addr, addr_end);
-			pte = pgtable_lookup_entry_d((uint64_t *)pml4, addr, &size,  &guest_pgtable);
+			pte = pgtable_lookup_entry((uint64_t *)pml4, addr, &size,  &guest_pgtable);
 			if (pte == NULL) {
 				pr_err("DMAR%d, %sPageTable, mapping of %llx is NOT present, loop:%d",
 					dmar_index, op == GUEST_MAPPING_LOOKUP ? "Guest ": "Shadow ", addr, loop);

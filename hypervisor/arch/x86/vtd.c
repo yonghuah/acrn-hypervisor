@@ -22,26 +22,15 @@
 #include <pci.h>
 #include <asm/platform_caps.h>
 
-#define DBG_IOMMU 1
+#define DBG_IOMMU 0
 
 #if DBG_IOMMU
 #define DBG_LEVEL_IOMMU LOG_INFO
 #define DMAR_FAULT_LOOP_MAX 10
 #else
-#define DBG_LEVEL_IOMMU 3U
+#define DBG_LEVEL_IOMMU 6U
 #endif
 #define LEVEL_WIDTH 9U
-#if 0
-static inline uint64_t dmar_get_bitslice(uint64_t var, uint64_t mask, uint32_t pos)
-{
-	return ((var & mask) >> pos);
-}
-
-static inline uint64_t dmar_set_bitslice(uint64_t var, uint64_t mask, uint32_t pos, uint64_t val)
-{
-	return ((var & ~mask) | ((val << pos) & mask));
-}
-#endif
 
 /* translation type */
 #define DMAR_CTX_TT_UNTRANSLATED    0x0UL
@@ -170,9 +159,6 @@ static int32_t register_hrhd_units(void)
 static inline void dmar_wait_completion(const struct dmar_drhd_rt *dmar_unit, uint32_t offset,
 	uint32_t mask, uint32_t pre_condition, uint32_t *status)
 {
-	dev_dbg(DBG_LEVEL_IOMMU, "%s offset: 0x%x, mask: 0x%x, pre_condition: %d\n",
-			__func__, offset, mask, pre_condition);
-
 	/* variable start isn't used when built as release version */
 	__unused uint64_t start = cpu_ticks();
 
@@ -208,46 +194,46 @@ static inline uint8_t iommu_ecap_sc(uint64_t ecap)
 
 static void dmar_unit_show_capability(struct dmar_drhd_rt *dmar_unit)
 {
-	pr_err("DMAR%d, base:[0x%x]", dmar_unit->index, dmar_unit->drhd->reg_base_addr);
-	pr_err("\tNumDomain:%d", iommu_cap_ndoms(dmar_unit->cap));
-	pr_err("\tAdvancedFaultLogging:%d", iommu_cap_afl(dmar_unit->cap));
-	pr_err("\tRequiredWBFlush:%d", iommu_cap_rwbf(dmar_unit->cap));
-	pr_err("\tProtectedLowMemRegion:%d", iommu_cap_plmr(dmar_unit->cap));
-	pr_err("\tProtectedHighMemRegion:%d", iommu_cap_phmr(dmar_unit->cap));
-	pr_err("\tCachingMode:%d", iommu_cap_caching_mode(dmar_unit->cap));
-	pr_err("\tSAGAW:0x%x", iommu_cap_sagaw(dmar_unit->cap));
-	pr_err("\tMGAW:%d", iommu_cap_mgaw(dmar_unit->cap));
-	pr_err("\tZeroLenRead:%d", iommu_cap_zlr(dmar_unit->cap));
-	pr_err("\tLargePageSupport:0x%x", iommu_cap_super_page_val(dmar_unit->cap));
-	pr_err("\tPageSelectiveInvalidation:%d", iommu_cap_pgsel_inv(dmar_unit->cap));
-	pr_err("\tPageSelectInvalidation:%d", iommu_cap_pgsel_inv(dmar_unit->cap));
-	pr_err("\tNumOfFaultRecordingReg:%d", iommu_cap_num_fault_regs(dmar_unit->cap));
-	pr_err("\tMAMV:0x%x", iommu_cap_max_amask_val(dmar_unit->cap));
-	pr_err("\tWriteDraining:%d", iommu_cap_write_drain(dmar_unit->cap));
-	pr_err("\tReadDraining:%d", iommu_cap_read_drain(dmar_unit->cap));
-	pr_err("\tPostInterrupts:%d\n", iommu_cap_pi(dmar_unit->cap));
-	pr_err("\tPage-walk Coherency:%d", iommu_ecap_c(dmar_unit->ecap));
-	pr_err("\tQueuedInvalidation:%d", iommu_ecap_qi(dmar_unit->ecap));
-	pr_err("\tDeviceTLB:%d", iommu_ecap_dt(dmar_unit->ecap));
-	pr_err("\tInterruptRemapping:%d", iommu_ecap_ir(dmar_unit->ecap));
-	pr_err("\tExtendedInterruptMode:%d", iommu_ecap_eim(dmar_unit->ecap));
-	pr_err("\tPassThrough:%d", iommu_ecap_pt(dmar_unit->ecap));
-	pr_err("\tSnoopControl:%d", iommu_ecap_sc(dmar_unit->ecap));
-	pr_err("\tIOTLB RegOffset:0x%x", iommu_ecap_iro(dmar_unit->ecap));
-	pr_err("\tMHMV:0x%x", iommu_ecap_mhmv(dmar_unit->ecap));
-	pr_err("\tECS:%d", iommu_ecap_ecs(dmar_unit->ecap));
-	pr_err("\tMTS:%d", iommu_ecap_mts(dmar_unit->ecap));
-	pr_err("\tNEST:%d", iommu_ecap_nest(dmar_unit->ecap));
-	pr_err("\tDIS:%d", iommu_ecap_dis(dmar_unit->ecap));
-	pr_err("\tPRS:%d", iommu_ecap_prs(dmar_unit->ecap));
-	pr_err("\tERS:%d", iommu_ecap_ers(dmar_unit->ecap));
-	pr_err("\tSRS:%d", iommu_ecap_srs(dmar_unit->ecap));
-	pr_err("\tNWFS:%d", iommu_ecap_nwfs(dmar_unit->ecap));
-	pr_err("\tEAFS:%d", iommu_ecap_eafs(dmar_unit->ecap));
-	pr_err("\tPSS:0x%x", iommu_ecap_pss(dmar_unit->ecap));
-	pr_err("\tPASID:%d", iommu_ecap_pasid(dmar_unit->ecap));
-	pr_err("\tDIT:%d", iommu_ecap_dit(dmar_unit->ecap));
-	pr_err("\tPDS:%d\n", iommu_ecap_pds(dmar_unit->ecap));
+	pr_info("dmar unit[0x%x]", dmar_unit->drhd->reg_base_addr);
+	pr_info("\tNumDomain:%d", iommu_cap_ndoms(dmar_unit->cap));
+	pr_info("\tAdvancedFaultLogging:%d", iommu_cap_afl(dmar_unit->cap));
+	pr_info("\tRequiredWBFlush:%d", iommu_cap_rwbf(dmar_unit->cap));
+	pr_info("\tProtectedLowMemRegion:%d", iommu_cap_plmr(dmar_unit->cap));
+	pr_info("\tProtectedHighMemRegion:%d", iommu_cap_phmr(dmar_unit->cap));
+	pr_info("\tCachingMode:%d", iommu_cap_caching_mode(dmar_unit->cap));
+	pr_info("\tSAGAW:0x%x", iommu_cap_sagaw(dmar_unit->cap));
+	pr_info("\tMGAW:%d", iommu_cap_mgaw(dmar_unit->cap));
+	pr_info("\tZeroLenRead:%d", iommu_cap_zlr(dmar_unit->cap));
+	pr_info("\tLargePageSupport:0x%x", iommu_cap_super_page_val(dmar_unit->cap));
+	pr_info("\tPageSelectiveInvalidation:%d", iommu_cap_pgsel_inv(dmar_unit->cap));
+	pr_info("\tPageSelectInvalidation:%d", iommu_cap_pgsel_inv(dmar_unit->cap));
+	pr_info("\tNumOfFaultRecordingReg:%d", iommu_cap_num_fault_regs(dmar_unit->cap));
+	pr_info("\tMAMV:0x%x", iommu_cap_max_amask_val(dmar_unit->cap));
+	pr_info("\tWriteDraining:%d", iommu_cap_write_drain(dmar_unit->cap));
+	pr_info("\tReadDraining:%d", iommu_cap_read_drain(dmar_unit->cap));
+	pr_info("\tPostInterrupts:%d\n", iommu_cap_pi(dmar_unit->cap));
+	pr_info("\tPage-walk Coherency:%d", iommu_ecap_c(dmar_unit->ecap));
+	pr_info("\tQueuedInvalidation:%d", iommu_ecap_qi(dmar_unit->ecap));
+	pr_info("\tDeviceTLB:%d", iommu_ecap_dt(dmar_unit->ecap));
+	pr_info("\tInterruptRemapping:%d", iommu_ecap_ir(dmar_unit->ecap));
+	pr_info("\tExtendedInterruptMode:%d", iommu_ecap_eim(dmar_unit->ecap));
+	pr_info("\tPassThrough:%d", iommu_ecap_pt(dmar_unit->ecap));
+	pr_info("\tSnoopControl:%d", iommu_ecap_sc(dmar_unit->ecap));
+	pr_info("\tIOTLB RegOffset:0x%x", iommu_ecap_iro(dmar_unit->ecap));
+	pr_info("\tMHMV:0x%x", iommu_ecap_mhmv(dmar_unit->ecap));
+	pr_info("\tECS:%d", iommu_ecap_ecs(dmar_unit->ecap));
+	pr_info("\tMTS:%d", iommu_ecap_mts(dmar_unit->ecap));
+	pr_info("\tNEST:%d", iommu_ecap_nest(dmar_unit->ecap));
+	pr_info("\tDIS:%d", iommu_ecap_dis(dmar_unit->ecap));
+	pr_info("\tPRS:%d", iommu_ecap_prs(dmar_unit->ecap));
+	pr_info("\tERS:%d", iommu_ecap_ers(dmar_unit->ecap));
+	pr_info("\tSRS:%d", iommu_ecap_srs(dmar_unit->ecap));
+	pr_info("\tNWFS:%d", iommu_ecap_nwfs(dmar_unit->ecap));
+	pr_info("\tEAFS:%d", iommu_ecap_eafs(dmar_unit->ecap));
+	pr_info("\tPSS:0x%x", iommu_ecap_pss(dmar_unit->ecap));
+	pr_info("\tPASID:%d", iommu_ecap_pasid(dmar_unit->ecap));
+	pr_info("\tDIT:%d", iommu_ecap_dit(dmar_unit->ecap));
+	pr_info("\tPDS:%d\n", iommu_ecap_pds(dmar_unit->ecap));
 }
 #endif
 
@@ -294,12 +280,13 @@ static void dmar_enable_intr_remapping(struct dmar_drhd_rt *dmar_unit)
 		iommu_write32(dmar_unit, DMAR_GCMD_REG, dmar_unit->gcmd);
 		/* 32-bit register */
 		dmar_wait_completion(dmar_unit, DMAR_GSTS_REG, DMA_GSTS_IRES, 0U, &status);
+#if DBG_IOMMU
+		status = iommu_read32(dmar_unit, DMAR_GSTS_REG);
+#endif
 	}
 
 	spinlock_release(&(dmar_unit->lock));
-
-	status = iommu_read32(dmar_unit, DMAR_GSTS_REG);
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: dmar%d gsr:0x%x", __func__, dmar_unit->index, status);
+	dev_dbg(DBG_LEVEL_IOMMU, "%s: gsr:0x%x", __func__, status);
 }
 
 static void dmar_enable_translation(struct dmar_drhd_rt *dmar_unit)
@@ -319,8 +306,7 @@ static void dmar_enable_translation(struct dmar_drhd_rt *dmar_unit)
 
 	spinlock_release(&(dmar_unit->lock));
 
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: dmar%d gsr:0x%x", __func__, dmar_unit->index, status);
-	pr_err("%s: DMAR%d gsr:0x%x", __func__, dmar_unit->index, status);
+	dev_dbg(DBG_LEVEL_IOMMU, "%s: gsr:0x%x", __func__, status);
 }
 
 static void dmar_disable_intr_remapping(struct dmar_drhd_rt *dmar_unit)
@@ -336,8 +322,6 @@ static void dmar_disable_intr_remapping(struct dmar_drhd_rt *dmar_unit)
 	}
 
 	spinlock_release(&(dmar_unit->lock));
-
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: dmar%d gsr:0x%x", __func__, dmar_unit->index, status);
 }
 
 static void dmar_disable_translation(struct dmar_drhd_rt *dmar_unit)
@@ -353,8 +337,6 @@ static void dmar_disable_translation(struct dmar_drhd_rt *dmar_unit)
 	}
 
 	spinlock_release(&(dmar_unit->lock));
-
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: dmar%d gsr:0x%x", __func__, dmar_unit->index, status);
 }
 
 static int32_t dmar_register_hrhd(struct dmar_drhd_rt *dmar_unit)
@@ -384,6 +366,15 @@ static int32_t dmar_register_hrhd(struct dmar_drhd_rt *dmar_unit)
 	dmar_unit->ecap_iotlb_offset = iommu_ecap_iro(dmar_unit->ecap) * 16U;
 	dmar_unit->root_table_addr = hva2hpa(get_root_table(dmar_unit->index));
 	dmar_unit->ir_table_addr = hva2hpa(get_ir_table(dmar_unit->index));
+
+#if DBG_IOMMU
+	pr_info("version:0x%x, cap:0x%lx, ecap:0x%lx",
+		iommu_read32(dmar_unit, DMAR_VER_REG), dmar_unit->cap, dmar_unit->ecap);
+	pr_info("sagaw:0x%x, msagaw:0x%x, iotlb offset 0x%x",
+		iommu_cap_sagaw(dmar_unit->cap), dmar_unit->cap_msagaw, dmar_unit->ecap_iotlb_offset);
+
+	dmar_unit_show_capability(dmar_unit);
+#endif
 
 	/* check capability */
 	if ((iommu_cap_super_page_val(dmar_unit->cap) & 0x1U) == 0U) {
@@ -551,10 +542,7 @@ static void dmar_issue_qi_request_complete(struct dmar_drhd_rt *dmar_unit, struc
 	start = cpu_ticks();
 	while (qi_status != DMAR_INV_STATUS_COMPLETED) {
 		if ((cpu_ticks() - start) > TICKS_PER_MS) {
-			pr_err("DMAR%d OP Timeout! @ %s, 0x%lx, 0x%lx", dmar_unit->index, __func__,
-				invalidate_desc_ptr->hi_64, invalidate_desc_ptr->lo_64);
-
-			start = cpu_ticks();
+			pr_err("DMAR OP Timeout! @ %s", __func__);
 			break;
 		}
 		asm_pause();
@@ -670,8 +658,6 @@ static void dmar_set_intr_remap_table(struct dmar_drhd_rt *dmar_unit)
 	dmar_wait_completion(dmar_unit, DMAR_GSTS_REG, DMA_GSTS_IRTPS, 0U, &status);
 
 	spinlock_release(&(dmar_unit->lock));
-
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: dmar%d gsr:0x%x", __func__, dmar_unit->index, status);
 }
 
 static void dmar_invalid_iec(struct dmar_drhd_rt *dmar_unit, uint16_t intr_index,
@@ -704,17 +690,13 @@ static void dmar_set_root_table(struct dmar_drhd_rt *dmar_unit)
 	uint32_t status;
 
 	spinlock_obtain(&(dmar_unit->lock));
-	//if (dmar_unit->features & DMAR_FEAT_IOM) {
-		iommu_write64(dmar_unit, DMAR_RTADDR_REG, dmar_unit->root_table_addr);
-	//}
+	iommu_write64(dmar_unit, DMAR_RTADDR_REG, dmar_unit->root_table_addr);
 
 	iommu_write32(dmar_unit, DMAR_GCMD_REG, dmar_unit->gcmd | DMA_GCMD_SRTP);
 
 	/* 32-bit register */
 	dmar_wait_completion(dmar_unit, DMAR_GSTS_REG, DMA_GSTS_RTPS, 0U, &status);
 	spinlock_release(&(dmar_unit->lock));
-
-	dev_dbg(3, "%s: DMAR%d gsr:0x%x, RTA:0x%llx", __func__, dmar_unit->index, status, dmar_unit->root_table_addr);
 }
 
 static void dmar_fault_event_mask(struct dmar_drhd_rt *dmar_unit)
@@ -754,51 +736,50 @@ static void dmar_fault_msi_write(struct dmar_drhd_rt *dmar_unit,
 static void fault_status_analysis(uint32_t status)
 {
 	if (dma_fsts_pfo(status)) {
-		pr_err("Primary Fault Overflow");
+		pr_info("Primary Fault Overflow");
 	}
 
 	if (dma_fsts_ppf(status)) {
-		pr_err("Primary Pending Fault");
+		pr_info("Primary Pending Fault");
 	}
 
 	if (dma_fsts_afo(status)) {
-		pr_err("Advanced Fault Overflow");
+		pr_info("Advanced Fault Overflow");
 	}
 
 	if (dma_fsts_apf(status)) {
-		pr_err("Advanced Pending Fault");
+		pr_info("Advanced Pending Fault");
 	}
 
 	if (dma_fsts_iqe(status)) {
-		pr_err("Invalidation Queue Error");
+		pr_info("Invalidation Queue Error");
 	}
 
 	if (dma_fsts_ice(status)) {
-		pr_err("Invalidation Completion Error");
+		pr_info("Invalidation Completion Error");
 	}
 
 	if (dma_fsts_ite(status)) {
-		pr_err("Invalidation Time-out Error");
+		pr_info("Invalidation Time-out Error");
 	}
 
 	if (dma_fsts_pro(status)) {
-		pr_err("Page Request Overflow");
+		pr_info("Page Request Overflow");
 	}
 }
 #endif
 
-static void fault_record_analysis( uint64_t low, uint64_t high)
+static void fault_record_analysis(__unused uint64_t low, uint64_t high)
 {
 	union pci_bdf dmar_bdf;
 
-	//if (!dma_frcd_up_f(high)) {
-	if (dma_frcd_up_f(high)) {
+	if (!dma_frcd_up_f(high)) {
 		dmar_bdf.value = dma_frcd_up_sid(high);
 		/* currently skip PASID related parsing */
-		pr_err("%s, Reason: 0x%x, SID: %x.%x.%x @0x%lx",
+		pr_info("%s, Reason: 0x%x, SID: %x.%x.%x @0x%lx",
 			(dma_frcd_up_t(high) != 0U) ? "Read/Atomic" : "Write", dma_frcd_up_fr(high),
 			dmar_bdf.bits.b, dmar_bdf.bits.d, dmar_bdf.bits.f, low);
-#if 0//DBG_IOMMU
+#if DBG_IOMMU
 		if (iommu_ecap_dt(dmar_unit->ecap) != 0U) {
 			pr_info("Address Type: 0x%x", dma_frcd_up_at(high));
 		}
@@ -806,9 +787,6 @@ static void fault_record_analysis( uint64_t low, uint64_t high)
 	}
 }
 
-int dbg_mapping = 1;
-//extern void check_viommu_mapping(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr, uint64_t nr_pages);
-//extern void check_viommu_mapping_one(struct dmar_drhd_rt *iommu, uint64_t addr, uint64_t nr_pages);
 static void dmar_fault_handler(uint32_t irq, void *data)
 {
 	struct dmar_drhd_rt *dmar_unit = (struct dmar_drhd_rt *)data;
@@ -818,24 +796,20 @@ static void dmar_fault_handler(uint32_t irq, void *data)
 	struct dmar_entry fault_record;
 	int32_t loop = 0;
 
-//	dev_dbg(3, "%s: irq = %d", __func__, irq);
+	dev_dbg(DBG_LEVEL_IOMMU, "%s: irq = %d", __func__, irq);
 
 	fsr = iommu_read32(dmar_unit, DMAR_FSTS_REG);
-
-	dev_dbg(3, "%s: irq = %d, FaultStatus:%lx", __func__, irq, fsr);
 
 #if DBG_IOMMU
 	fault_status_analysis(fsr);
 #endif
-	dbg_mapping = 0; 
+
 	while (dma_fsts_ppf(fsr)) {
 		loop++;
 		index = dma_fsts_fri(fsr);
 		record_reg_offset = (uint32_t)dmar_unit->cap_fault_reg_offset + (index * 16U);
-		dev_dbg(3, "%s: cap_num_fault_regs:%d, cap_fault_reg_offset:0x%llx, record_reg_offset:%lx, index:%d.",
-			__func__, dmar_unit->cap_num_fault_regs, dmar_unit->cap_fault_reg_offset, record_reg_offset, index);
 		if (index >= dmar_unit->cap_num_fault_regs) {
-			dev_dbg(3, "%s: invalid FR Index", __func__);
+			dev_dbg(DBG_LEVEL_IOMMU, "%s: invalid FR Index", __func__);
 			break;
 		}
 
@@ -843,11 +817,10 @@ static void dmar_fault_handler(uint32_t irq, void *data)
 		fault_record.lo_64 = iommu_read64(dmar_unit, record_reg_offset);
 		fault_record.hi_64 = iommu_read64(dmar_unit, record_reg_offset + 8U);
 
-		dev_dbg(3, "%s: DMAR%d, record[%d] @0x%x:  lo_64: 0x%lx, hi_64: 0x%lx, loop:%d",
-			__func__, dmar_unit->index, index, record_reg_offset, fault_record.lo_64, fault_record.hi_64, loop);
+		dev_dbg(DBG_LEVEL_IOMMU, "%s: record[%d] @0x%x:  0x%lx, 0x%lx",
+			__func__, index, record_reg_offset, fault_record.lo_64, fault_record.hi_64);
 
 		fault_record_analysis(fault_record.lo_64, fault_record.hi_64);
-		//check_viommu_mapping_one(dmar_unit, fault_record.lo_64,1);
 
 		/* write to clear */
 		iommu_write64(dmar_unit, record_reg_offset, fault_record.lo_64);
@@ -855,7 +828,7 @@ static void dmar_fault_handler(uint32_t irq, void *data)
 
 #ifdef DMAR_FAULT_LOOP_MAX
 		if (loop > DMAR_FAULT_LOOP_MAX) {
-			dev_dbg(3, "%s: loop more than %d times", __func__, DMAR_FAULT_LOOP_MAX);
+			dev_dbg(DBG_LEVEL_IOMMU, "%s: loop more than %d times", __func__, DMAR_FAULT_LOOP_MAX);
 			break;
 		}
 #endif
@@ -905,8 +878,6 @@ static void dmar_enable_qi(struct dmar_drhd_rt *dmar_unit)
 	}
 
 	spinlock_release(&(dmar_unit->lock));
-
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: dmar%d gsr:0x%x", __func__, dmar_unit->index, status);
 }
 
 static void dmar_disable_qi(struct dmar_drhd_rt *dmar_unit)
@@ -922,8 +893,6 @@ static void dmar_disable_qi(struct dmar_drhd_rt *dmar_unit)
 	}
 
 	spinlock_release(&(dmar_unit->lock));
-
-	dev_dbg(DBG_LEVEL_IOMMU, "%s: dmar%d gsr:0x%x", __func__, dmar_unit->index, status);
 }
 
 static void prepare_dmar(struct dmar_drhd_rt *dmar_unit)
@@ -955,7 +924,6 @@ static void prepare_dmar(struct dmar_drhd_rt *dmar_unit)
 static void enable_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	dev_dbg(DBG_LEVEL_IOMMU, "enable dmar uint [0x%x]", dmar_unit->drhd->reg_base_addr);
-	pr_err("%s, enable DMAR%d, Register Page base:[0x%x]", __func__,  dmar_unit->index, dmar_unit->drhd->reg_base_addr);
 
 	if (dmar_unit->features & DMAR_FEAT_IR) {
 		dmar_invalid_iec_global(dmar_unit);
@@ -1059,7 +1027,6 @@ static int32_t iommu_attach_device(const struct iommu_domain *domain, uint8_t bu
 	sid.fields.devfun = devfun;
 
 	dmar_unit = device_to_dmaru(bus, devfun);
-//	pr_err("%s, Add BDF [%d:%d:%d] to DMAR%d.", __func__, bus, (devfun >> 3) & 0x1f, devfun & 0x7, dmar_unit->index);
 	if (is_dmar_unit_valid(dmar_unit, sid) && dmar_unit_support_aw(dmar_unit, domain->addr_width)) {
 		root_table = (struct dmar_entry *)hpa2hva(dmar_unit->root_table_addr);
 		root_entry = root_table + bus;
