@@ -152,6 +152,12 @@ static inline uint64_t get_shadow_pml4(struct acrn_viommu *viommu, uint32_t did)
 	return viommu->shadow_pml4[did];
 }
 
+/* get the Guest Root Table Address (HVA) */
+static inline uint64_t get_guest_rta(struct acrn_viommu *viommu)
+{
+	return (uint64_t)gpa2hva(viommu->vm, viommu_read64(viommu, DMAR_RTADDR_REG) & PAGE_MASK);
+}
+
 static uint64_t get_shadow_page_num(void)
 {
 	uint64_t pd_page_num = PD_PAGE_NUM(VIOMMU_IOVA_SPACE_SIZE);
@@ -190,7 +196,7 @@ void viommu_reserve_buffer_for_shadow_pages(void)
 	reserve_shadow_bitmap();
 }
 
-void init_shadow_pgtable(struct acrn_viommu *viommu)
+static void init_shadow_pgtable(struct acrn_viommu *viommu)
 {
 	struct pgtable *table;
 	struct page_pool * pool;
@@ -279,52 +285,41 @@ static void free_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 	}
 }
 
-void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable_mapping_handler leaf_handler)
+static void delete_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 {
-	uint64_t *pml4e, *pdpte, *pde, *pte;
-	uint64_t i, j, k, m;
-	uint64_t iova, gpa;
-	const struct pgtable *table = &guest_pgtable;
-	uint64_t guest_pml4 = get_guest_pml4(viommu, did);
+	struct pgtable *table = &viommu->shadow_pgtable;
 
-	for (i = 0UL; i < PTRS_PER_PML4E; i++) {
-		pml4e = pml4e_offset((uint64_t *)guest_pml4, i << PML4E_SHIFT);
-		if (!pgentry_present(table, (*pml4e))) {
-			continue;
+	free_shadow_table(viommu, guest_did);
+	free_page(table->pool, (struct page *)viommu->shadow_pml4[guest_did]);
+	viommu->shadow_pml4[guest_did] = 0UL;
+}
+
+static int create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
+{
+	int status = 0;
+	uint64_t shadow_pml4;
+
+	/*
+	 * VT-d specification #9.3, Context-entries programmed with the same domain identifier
+	 * must always reference same address translation(SLPTPTR field), so shadow table is created
+	 * for each IOMMU domain, instead of device specific.
+	 */
+	if (viommu->shadow_pml4[guest_did] == 0UL) {
+		/* create IOMMU shadow table for this guest IOMMU domain */
+		shadow_pml4 = (uint64_t)pgtable_create_root(&viommu->shadow_pgtable);
+		if (shadow_pml4 == 0UL) {
+			pr_err("%s, failed to create shadow table for DMAR%d, did:%d.",
+				__func__, viommu->drhd_rt->index, guest_did);
+			status = -1;
 		}
-		for (j = 0UL; j < PTRS_PER_PDPTE; j++) {
-			pdpte = pdpte_offset(pml4e, j << PDPTE_SHIFT);
-			if (!pgentry_present(table, (*pdpte))) {
-				continue;
-			}
-			if (pdpte_large(*pdpte) != 0UL) {
-				iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT);
-				gpa = (*pdpte & (~EPT_PFN_HIGH_MASK)) & (~(PDPTE_SIZE - 1UL));
-				leaf_handler(viommu, did, iova, gpa, PDPTE_SIZE, ((*pdpte) & EPT_RWX));
-				continue;
-			}
-			for (k = 0UL; k < PTRS_PER_PDE; k++) {
-				pde = pde_offset(pdpte, k << PDE_SHIFT);
-				if (!pgentry_present(table, (*pde))) {
-					continue;
-				}
-				if (pde_large(*pde) != 0UL) {
-					iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT);
-					gpa = (*pde & (~EPT_PFN_HIGH_MASK)) & (~(PDE_SIZE - 1UL));
-					leaf_handler(viommu, did, iova, gpa, PDE_SIZE, ((*pde) & EPT_RWX));
-					continue;
-				}
-				for (m = 0UL; m < PTRS_PER_PTE; m++) {
-					pte = pte_offset(pde, m << PTE_SHIFT);
-					if (pgentry_present(table, (*pte))) {
-						iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT) | (m << PTE_SHIFT);
-						gpa = (*pte & (~EPT_PFN_HIGH_MASK)) & (~(PTE_SIZE - 1UL));
-						leaf_handler(viommu, did, iova, gpa, PTE_SIZE, ((*pte) & EPT_RWX));
-					}
-				}
-			}
-		}
-	}
+		viommu->shadow_pml4[guest_did] = shadow_pml4;
+		/*pr_err("DMAR%d, DID:%d, create shadow pml4:%llx", viommu->drhd_rt->index, guest_did, shadow_pml4);*/
+	}/* else {
+		pr_err("DMAR%d, DID:%d, shadow pml4:%llx, has been created.", viommu->drhd_rt->index, guest_did, viommu->shadow_pml4[guest_did]);
+	}*/
+
+
+	return status;
 }
 
 static bool iommu_rsvd_region(__unused struct acrn_viommu *viommu, __unused uint16_t did, uint64_t iova, uint64_t gpa)
@@ -401,6 +396,54 @@ static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, ui
 	return synced_size;
 }
 
+static void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable_mapping_handler leaf_handler)
+{
+	uint64_t *pml4e, *pdpte, *pde, *pte;
+	uint64_t i, j, k, m;
+	uint64_t iova, gpa;
+	const struct pgtable *table = &guest_pgtable;
+	uint64_t guest_pml4 = get_guest_pml4(viommu, did);
+
+	for (i = 0UL; i < PTRS_PER_PML4E; i++) {
+		pml4e = pml4e_offset((uint64_t *)guest_pml4, i << PML4E_SHIFT);
+		if (!pgentry_present(table, (*pml4e))) {
+			continue;
+		}
+		for (j = 0UL; j < PTRS_PER_PDPTE; j++) {
+			pdpte = pdpte_offset(pml4e, j << PDPTE_SHIFT);
+			if (!pgentry_present(table, (*pdpte))) {
+				continue;
+			}
+			if (pdpte_large(*pdpte) != 0UL) {
+				iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT);
+				gpa = (*pdpte & (~EPT_PFN_HIGH_MASK)) & (~(PDPTE_SIZE - 1UL));
+				leaf_handler(viommu, did, iova, gpa, PDPTE_SIZE, ((*pdpte) & EPT_RWX));
+				continue;
+			}
+			for (k = 0UL; k < PTRS_PER_PDE; k++) {
+				pde = pde_offset(pdpte, k << PDE_SHIFT);
+				if (!pgentry_present(table, (*pde))) {
+					continue;
+				}
+				if (pde_large(*pde) != 0UL) {
+					iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT);
+					gpa = (*pde & (~EPT_PFN_HIGH_MASK)) & (~(PDE_SIZE - 1UL));
+					leaf_handler(viommu, did, iova, gpa, PDE_SIZE, ((*pde) & EPT_RWX));
+					continue;
+				}
+				for (m = 0UL; m < PTRS_PER_PTE; m++) {
+					pte = pte_offset(pde, m << PTE_SHIFT);
+					if (pgentry_present(table, (*pte))) {
+						iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT) | (m << PTE_SHIFT);
+						gpa = (*pte & (~EPT_PFN_HIGH_MASK)) & (~(PTE_SIZE - 1UL));
+						leaf_handler(viommu, did, iova, gpa, PTE_SIZE, ((*pte) & EPT_RWX));
+					}
+				}
+			}
+		}
+	}
+}
+
 static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, uint64_t addr, uint64_t size, pgtable_mapping_handler shadow_sync)
 {
 	uint64_t gpa, pte_size, req_size, synced_size, permit;
@@ -473,49 +516,6 @@ static struct dmar_entry *get_shadow_context_entry(struct acrn_viommu *viommu, u
 static uint32_t remap_did(__unused struct acrn_viommu *viommu, uint32_t guest_did)
 {
 	return (guest_did + HV_RSV_DID_NUM);
-}
-
-/* get the Guest Root Table Address (HVA) */
-static uint64_t get_guest_rta(struct acrn_viommu *viommu)
-{
-	return (uint64_t)gpa2hva(viommu->vm, viommu_read64(viommu, DMAR_RTADDR_REG) & PAGE_MASK);
-}
-
-static int create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
-{
-	int status = 0;
-	uint64_t shadow_pml4;
-
-	/*
-	 * VT-d specification #9.3, Context-entries programmed with the same domain identifier
-	 * must always reference same address translation(SLPTPTR field), so shadow table is created
-	 * for each IOMMU domain, instead of device specific.
-	 */
-	if (viommu->shadow_pml4[guest_did] == 0UL) {
-		/* create IOMMU shadow table for this guest IOMMU domain */
-		shadow_pml4 = (uint64_t)pgtable_create_root(&viommu->shadow_pgtable);
-		if (shadow_pml4 == 0UL) {
-			pr_err("%s, failed to create shadow table for DMAR%d, did:%d.",
-				__func__, viommu->drhd_rt->index, guest_did);
-			status = -1;
-		}
-		viommu->shadow_pml4[guest_did] = shadow_pml4;
-		/*pr_err("DMAR%d, DID:%d, create shadow pml4:%llx", viommu->drhd_rt->index, guest_did, shadow_pml4);*/
-	}/* else {
-		pr_err("DMAR%d, DID:%d, shadow pml4:%llx, has been created.", viommu->drhd_rt->index, guest_did, viommu->shadow_pml4[guest_did]);
-	}*/
-
-
-	return status;
-}
-
-static void delete_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
-{
-	struct pgtable *table = &viommu->shadow_pgtable;
-
-	free_shadow_table(viommu, guest_did);
-	free_page(table->pool, (struct page *)viommu->shadow_pml4[guest_did]);
-	viommu->shadow_pml4[guest_did] = 0UL;
 }
 
 static int context_cache_inv_device(struct acrn_viommu *viommu, __unused uint32_t did, uint32_t sid, __unused uint32_t fm)
@@ -619,6 +619,32 @@ static int context_cache_inv_global(struct acrn_viommu *viommu, uint32_t fm)
 	return 0;
 }
 
+static int iotlb_inv_psi(struct acrn_viommu *viommu, struct dmar_entry *iotlb_inv_desc)
+{
+	uint64_t did, am, addr, size;
+	int status = -1;
+	uint64_t guest_pml4;
+	uint64_t shadow_pml4;
+
+	did = VTD_INV_DESC_IOTLB_DID(iotlb_inv_desc->lo_64);
+	addr = VTD_INV_DESC_IOTLB_ADDR(iotlb_inv_desc->hi_64);
+	am = VTD_INV_DESC_IOTLB_AM(iotlb_inv_desc->hi_64);
+	size = ((1 << am) << 12);
+
+	if (did >= MAX_GUEST_IOMMU_DID) {
+		pr_err("%s, Can't support guest did:%d.\n", __func__, did);
+		return -1;
+	}
+
+	guest_pml4 = get_guest_pml4(viommu, (uint32_t)did);
+	shadow_pml4 = get_shadow_pml4(viommu, (uint32_t)did);
+	if ((guest_pml4 != 0UL) && (shadow_pml4 != 0UL)) {
+		walk_guest_pgtable_range(viommu, did, addr, size, shadow_sync_handler);
+	}
+
+	return status;
+}
+
 static int iotlb_inv_domain(struct acrn_viommu *viommu, uint32_t did)
 {
 	uint64_t guest_pml4, shadow_pml4;
@@ -660,32 +686,6 @@ static int iotlb_inv_global(struct acrn_viommu *viommu)
 		iotlb_inv_domain(viommu, did);
 	}
 	return 0;
-}
-
-static int iotlb_inv_psi(struct acrn_viommu *viommu, struct dmar_entry *iotlb_inv_desc)
-{
-	uint64_t did, am, addr, size;
-	int status = -1;
-	uint64_t guest_pml4;
-	uint64_t shadow_pml4;
-
-	did = VTD_INV_DESC_IOTLB_DID(iotlb_inv_desc->lo_64);
-	addr = VTD_INV_DESC_IOTLB_ADDR(iotlb_inv_desc->hi_64);
-	am = VTD_INV_DESC_IOTLB_AM(iotlb_inv_desc->hi_64);
-	size = ((1 << am) << 12);
-
-	if (did >= MAX_GUEST_IOMMU_DID) {
-		pr_err("%s, Can't support guest did:%d.\n", __func__, did);
-		return -1;
-	}
-
-	guest_pml4 = get_guest_pml4(viommu, (uint32_t)did);
-	shadow_pml4 = get_shadow_pml4(viommu, (uint32_t)did);
-	if ((guest_pml4 != 0UL) && (shadow_pml4 != 0UL)) {
-		walk_guest_pgtable_range(viommu, did, addr, size, shadow_sync_handler);
-	}
-
-	return status;
 }
 
 static int process_context_cache_desc(struct acrn_viommu *viommu, struct dmar_entry *entry)
@@ -783,7 +783,7 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 	return write_iqt;
 }
 
-int handle_fsts_write(struct acrn_viommu *viommu, uint32_t fsts)
+static int handle_fsts_write(struct acrn_viommu *viommu, uint32_t fsts)
 {
 	//pr_err("%s, DMAR%d, value:%llx", __func__, viommu->drhd_rt->index, fsts);
 	return 0;
@@ -791,7 +791,7 @@ int handle_fsts_write(struct acrn_viommu *viommu, uint32_t fsts)
 
 #define VTD_FECTL_IM_MASK (1U << 31)
 #define VTD_FECTL_IP_MASK (1U << 30)
-int handle_fectl_write(struct acrn_viommu *viommu, uint32_t req_fectl)
+static int handle_fectl_write(struct acrn_viommu *viommu, uint32_t req_fectl)
 {
 	uint32_t fectl = viommu_read32(viommu, DMAR_FECTL_REG);
 	uint32_t req_bits = req_fectl ^ fectl;
@@ -879,7 +879,7 @@ static void handle_iqt_write(struct acrn_viommu *viommu, uint16_t tail)
 }
 
 #define UNSUPPORTED_GCMD (DMA_GCMD_CFI | DMA_GCMD_IRE | DMA_GCMD_SIRTP | DMA_GCMD_EAFL | DMA_GCMD_SFL)
-int handle_gcmd(struct acrn_viommu *viommu)
+static int handle_gcmd(struct acrn_viommu *viommu)
 {
 	int status = 0;
 	int index = viommu->drhd_rt->index;
@@ -956,7 +956,7 @@ static uint32_t emulated_regs[EMUL_TBL_NUM] = {
 	DMAR_IQA_REG
 };
 
-bool is_emulated_access(uint32_t offset)
+static bool is_emulated_access(uint32_t offset)
 {
 	uint32_t i;
 
