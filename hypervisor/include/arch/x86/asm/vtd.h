@@ -49,6 +49,39 @@
 #define DMAR_ICS_REG    0x9cU    /* Invalidation complete status register */
 #define DMAR_IRTA_REG   0xb8U    /* Interrupt remapping table addr register */
 
+#define DMAR_CAP_ESIRTPS		(1UL << 62)
+#define DMAR_CAP_FL5LP		(1UL << 60)
+#define DMAR_CAP_PI		(1UL << 59)
+#define DMAR_CAP_FL1GP		(1UL << 56)
+#define DMAR_CAP_DRD		(1UL << 55)
+#define DMAR_CAP_DWD		(1UL << 54)
+#define DMAR_CAP_PSI		(1UL << 39)
+#define DMAR_CAP_CM		(1UL << 7)
+#define DMAR_CAP_PHMR		(1UL << 6)
+#define DMAR_CAP_PLMR		(1UL << 5)
+#define DMAR_CAP_RWBF		(1UL << 4)
+#define DMAR_CAP_AFL		(1UL << 3)
+
+#define DMAR_ECAP_SC		(1UL << 7)
+#define DMAR_ECAP_DT		(1UL << 2)
+#define DMAR_ECAP_QI		(1UL << 1)
+#define DMAR_ECAP_C		(1UL << 0)  /* Page Walk Coherent */
+
+#define DMAR_CAP_FRO_POS		(24U)
+#define DMAR_CAP_FRO_MASK	(0x3FFUL << DMAR_CAP_FRO_POS)
+
+#define DMAR_CAP_NFR_POS		(40U)
+#define DMAR_CAP_NFR_MASK	(0xFFUL << DMAR_CAP_NFR_POS)
+
+#define IQ_QUEUE_QS_MASK	(0x7)
+#define IQ_QUEUE_DW(iqa)	(((iqa) >> 11U) & 1UL)
+#define IQ_INV_DESC_SIZE(dw)	((dw) ? 32U : 16U )
+#define IQ_IQT_MASK(dw)		((dw) ? 0x3FFE0 : 0x7FFF0)
+
+/* Nuber of Fault Record Registers */
+#define DMAR_FCRD_REG_NR		(1UL)
+
+
 #define ROOT_ENTRY_LOWER_PRESENT_POS        (0U)
 #define ROOT_ENTRY_LOWER_PRESENT_MASK       (1UL << ROOT_ENTRY_LOWER_PRESENT_POS)
 #define ROOT_ENTRY_LOWER_CTP_POS            (12U)
@@ -86,7 +119,6 @@
 #define DMAR_INV_STATUS_DATA		(DMAR_INV_STATUS_COMPLETED << DMAR_INV_STATUS_DATA_SHIFT)
 #define DMAR_INV_WAIT_DESC_LOWER	(DMAR_INV_STATUS_WRITE | DMAR_INV_WAIT_DESC | DMAR_INV_STATUS_DATA)
 
-
 #define IOTLB_INV_LOWER_G_POS		4U
 #define IOTLB_INV_LOWER_G_MASK		(0x3UL << IOTLB_INV_LOWER_G_POS)
 #define IOTLB_INV_LOWER_DW_POS		6U
@@ -103,6 +135,27 @@
 #define IOTLB_INV_UPPER_IH_MASK		(0x1UL << IOTLB_INV_UPPER_IH_POS)
 #define IOTLB_INV_UPPER_ADDR_POS	12U
 #define IOTLB_INV_UPPER_ADDR_MASK	(0xFFFFFFFFFFFFFUL << IOTLB_INV_UPPER_ADDR_POS)
+
+#define DMAR_DOMAIN_ID_SHIFT             16  /* 16-bit domain id for 64K domains */
+#define DMAR_DOMAIN_ID_MASK              ((1UL << DMAR_DOMAIN_ID_SHIFT) - 1)
+#define DMAR_INV_DESC_CC_G               (3ULL << 4)
+#define DMAR_INV_DESC_CC_GLOBAL          (1ULL << 4)
+#define DMAR_INV_DESC_CC_DOMAIN          (2ULL << 4)
+#define DMAR_INV_DESC_CC_DEVICE          (3ULL << 4)
+#define DMAR_INV_DESC_CC_DID(val)        (((val) >> 16) & DMAR_DOMAIN_ID_MASK)
+#define DMAR_INV_DESC_CC_SID(val)        (((val) >> 32) & 0xffffUL)
+#define DMAR_INV_DESC_CC_FM(val)         (((val) >> 48) & 3UL)
+#define DMAR_INV_DESC_CC_RSVD            0xfffc00000000ffc0ULL
+
+#define DMAR_INV_DESC_IOTLB_GLOBAL       (1ULL << 4)
+#define DMAR_INV_DESC_IOTLB_DOMAIN       (2ULL << 4)
+#define DMAR_INV_DESC_IOTLB_PAGE         (3ULL << 4)
+
+#define DMAR_INV_DESC_IOTLB_DID(val)     (((val) >> 16) & DMAR_DOMAIN_ID_MASK)
+#define DMAR_INV_DESC_IOTLB_ADDR(val)    ((val) & ~0xfffULL)
+#define DMAR_INV_DESC_IOTLB_AM(val)      ((val) & 0x3fULL)
+#define DMAR_INV_DESC_IOTLB_RSVD_LO      0xffffffff0000ff00ULL
+#define DMAR_INV_DESC_IOTLB_RSVD_HI      0xf80ULL
 
 #define RTA_TTM(rta)			((rta >> 10) & 0x3)
 #define TTM_LEGACY_MODE			0U
@@ -149,6 +202,17 @@ struct intr_source {
 	 */
 	uint64_t pid_paddr;
 };
+
+static inline uint64_t dmar_get_bitslice(uint64_t var, uint64_t mask, uint32_t pos)
+{
+	return ((var & mask) >> pos);
+}
+
+static inline uint64_t dmar_set_bitslice(uint64_t var, uint64_t mask, uint32_t pos, uint64_t val)
+{
+	return ((var & ~mask) | ((val << pos) & mask));
+}
+
 
 static inline uint8_t dmar_ver_major(uint64_t version)
 {
@@ -661,16 +725,6 @@ struct dmar_drhd_rt {
 #ifdef CONFIG_ACPI_PARSE_ENABLED
 int32_t parse_dmar_table(struct dmar_info *plat_dmar_info);
 #endif
-
-static inline uint64_t dmar_get_bitslice(uint64_t var, uint64_t mask, uint32_t pos)
-{
-	return ((var & mask) >> pos);
-}
-
-static inline uint64_t dmar_set_bitslice(uint64_t var, uint64_t mask, uint32_t pos, uint64_t val)
-{
-	return ((var & ~mask) | ((val << pos) & mask));
-}
 
 
 /**

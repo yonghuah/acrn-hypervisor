@@ -15,29 +15,6 @@
 #include <asm/guest/viommu.h>
 #include <asm/board.h>
 
-#define VTD_DOMAIN_ID_SHIFT             16  /* 16-bit domain id for 64K domains */
-#define VTD_DOMAIN_ID_MASK              ((1UL << VTD_DOMAIN_ID_SHIFT) - 1)
-#define VTD_INV_DESC_CC_G               (3ULL << 4)
-#define VTD_INV_DESC_CC_GLOBAL          (1ULL << 4)
-#define VTD_INV_DESC_CC_DOMAIN          (2ULL << 4)
-#define VTD_INV_DESC_CC_DEVICE          (3ULL << 4)
-#define VTD_INV_DESC_CC_DID(val)        (((val) >> 16) & VTD_DOMAIN_ID_MASK)
-#define VTD_INV_DESC_CC_SID(val)        (((val) >> 32) & 0xffffUL)
-#define VTD_INV_DESC_CC_FM(val)         (((val) >> 48) & 3UL)
-#define VTD_INV_DESC_CC_RSVD            0xfffc00000000ffc0ULL
-
-/* Masks for IOTLB Invalidate Descriptor */
-#define VTD_INV_DESC_IOTLB_G            (3ULL << 4)
-#define VTD_INV_DESC_IOTLB_GLOBAL       (1ULL << 4)
-#define VTD_INV_DESC_IOTLB_DOMAIN       (2ULL << 4)
-#define VTD_INV_DESC_IOTLB_PAGE         (3ULL << 4)
-#define VTD_INV_DESC_IOTLB_DID(val)     (((val) >> 16) & VTD_DOMAIN_ID_MASK)
-#define VTD_INV_DESC_IOTLB_ADDR(val)    ((val) & ~0xfffULL)
-#define VTD_INV_DESC_IOTLB_AM(val)      ((val) & 0x3fULL)
-#define VTD_INV_DESC_IOTLB_RSVD_LO      0xffffffff0000ff00ULL
-#define VTD_INV_DESC_IOTLB_RSVD_HI      0xf80ULL
-
-#define VIOMMU_SHADOW_PGTABLE_SIZE (3 << 20) /*Hardcode this value for now*/
 
 #define DBG_LEVEL_VIOMMU 5U
 #if VIOMMU_DEBUG
@@ -179,7 +156,7 @@ static void reserve_shadow_bitmap(void)
 
 static uint64_t get_total_shadow_4k_pages_size(void)
 {
-	return VIOMMU_MAX_SHADOW_NUM* (get_shadow_page_num()) * PAGE_SIZE;
+	return VIOMMU_MAX_SHADOW_NUM * (get_shadow_page_num()) * PAGE_SIZE;
 }
 
 /*
@@ -626,9 +603,9 @@ static int iotlb_inv_psi(struct acrn_viommu *viommu, struct dmar_entry *iotlb_in
 	uint64_t guest_pml4;
 	uint64_t shadow_pml4;
 
-	did = VTD_INV_DESC_IOTLB_DID(iotlb_inv_desc->lo_64);
-	addr = VTD_INV_DESC_IOTLB_ADDR(iotlb_inv_desc->hi_64);
-	am = VTD_INV_DESC_IOTLB_AM(iotlb_inv_desc->hi_64);
+	did = DMAR_INV_DESC_IOTLB_DID(iotlb_inv_desc->lo_64);
+	addr = DMAR_INV_DESC_IOTLB_ADDR(iotlb_inv_desc->hi_64);
+	am = DMAR_INV_DESC_IOTLB_AM(iotlb_inv_desc->hi_64);
 	size = ((1 << am) << 12);
 
 	if (did >= MAX_GUEST_IOMMU_DID) {
@@ -692,23 +669,23 @@ static int process_context_cache_desc(struct acrn_viommu *viommu, struct dmar_en
 {
 	int status = -1;
 	uint32_t sid = 0U, did = 0U, fm = 0;
-	uint64_t cc_g = entry->lo_64 & VTD_INV_DESC_CC_G;
+	uint64_t cc_g = entry->lo_64 & DMAR_INV_DESC_CC_G;
 
-	fm = VTD_INV_DESC_CC_FM(entry->lo_64);
+	fm = DMAR_INV_DESC_CC_FM(entry->lo_64);
 	switch (cc_g) {
-	case VTD_INV_DESC_CC_GLOBAL:
+	case DMAR_INV_DESC_CC_GLOBAL:
 		/* On Linux, the translation table should be empty at this moment, just passthru this write */
 		pr_err("CC_Global: DMAR%d.", viommu->drhd_rt->index);
 		status =  context_cache_inv_global(viommu, fm);
 		break;
 
-	case VTD_INV_DESC_CC_DOMAIN:
-		pr_err("CC_Domain: DMAR%d, did:%lld.", __func__, viommu->drhd_rt->index, VTD_INV_DESC_CC_DID(entry->lo_64));
+	case DMAR_INV_DESC_CC_DOMAIN:
+		pr_err("CC_Domain: DMAR%d, did:%lld.", __func__, viommu->drhd_rt->index, DMAR_INV_DESC_CC_DID(entry->lo_64));
 		break;
 
-	case VTD_INV_DESC_CC_DEVICE:
-		did = VTD_INV_DESC_CC_DID(entry->lo_64); /* always be 0 from linux guest. */
-		sid = VTD_INV_DESC_CC_SID(entry->lo_64);
+	case DMAR_INV_DESC_CC_DEVICE:
+		did = DMAR_INV_DESC_CC_DID(entry->lo_64); /* always be 0 from linux guest. */
+		sid = DMAR_INV_DESC_CC_SID(entry->lo_64);
 		/*pr_err("CC_Device: DMAR%d, did:%llx, : sid:[%x:%x:%x]",
 			viommu->drhd_rt->index, VTD_INV_DESC_CC_DID(entry->lo_64), (sid >> 8) & 0xff, (sid >> 3) &0x1f, sid & 0x7);*/
 		status = context_cache_inv_device(viommu, did, sid, fm);
@@ -738,15 +715,15 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 	struct dmar_entry iotlb_desc;
 	int index = viommu->drhd_rt->index;
 
-	guest_did = VTD_INV_DESC_IOTLB_DID(entry->lo_64);
-	switch (entry->lo_64 & VTD_INV_DESC_IOTLB_G) {
-	case VTD_INV_DESC_IOTLB_GLOBAL:
+	guest_did = DMAR_INV_DESC_IOTLB_DID(entry->lo_64);
+	switch (entry->lo_64 & IOTLB_INV_LOWER_G_MASK) {
+	case DMAR_INV_DESC_IOTLB_GLOBAL:
 		pr_err("IOTLB_Global: DMAR%d.", index);
 		 /* guest page talbes are empty at this point, so it maybe skipped. */
 		iotlb_inv_global(viommu);
 		break;
 
-	case VTD_INV_DESC_IOTLB_DOMAIN:
+	case DMAR_INV_DESC_IOTLB_DOMAIN:
 		/*pr_err("IOTLB_Domain: DMAR%d, did:%d.", index, guest_did);*/
 
 		/*guest page table maybe present when guest issue domain iotlb.*/
@@ -754,15 +731,15 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 		remap_iotlb_desc_did(viommu, entry, guest_did);
 		break;
 
-	case VTD_INV_DESC_IOTLB_PAGE:
+	case DMAR_INV_DESC_IOTLB_PAGE:
 		if (!iommu_cap_max_amask_val(viommu->drhd_rt->cap)) {
-			entry->lo_64 = (entry->lo_64 & ~VTD_INV_DESC_IOTLB_G) | VTD_INV_DESC_IOTLB_DOMAIN;
+			entry->lo_64 = (entry->lo_64 & ~IOTLB_INV_LOWER_G_MASK) | DMAR_INV_DESC_IOTLB_DOMAIN;
 			entry->hi_64 = 0UL;
 		}
 
 		iotlb_inv_psi(viommu, entry);
 		remap_iotlb_desc_did(viommu, entry, guest_did);
-		if (!(viommu->drhd_rt->cap & VTD_CAP_PSI)) { // No PSI support on host
+		if (!(viommu->drhd_rt->cap & DMAR_CAP_PSI)) { // No PSI support on host
 			pr_err("%s, DMAR%d, IOTLB_PSI(Not support Natively), did:%d, iova:0x%llx, pages:%d.",
 				__func__, index, (entry->lo_64 >> 16) & 0xFFFF, entry->hi_64 & (~0xfff), 1 << (entry->hi_64 & 0x3f));
 
@@ -1094,13 +1071,13 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 	/* capability */
 	val64 = dmar_unit->cap;
 	 /* Always clear bits. */
-	val64 &= (~(VTD_CAP_ESIRTPS | VTD_CAP_FL5LP | VTD_CAP_PI | VTD_CAP_FL1GP | VTD_CAP_PHMR | VTD_CAP_PLMR | VTD_CAP_AFL));
-	val64 |= (VTD_CAP_PSI | VTD_CAP_CM); /* Always set capability bits */
+	val64 &= (~(DMAR_CAP_ESIRTPS | DMAR_CAP_FL5LP | DMAR_CAP_PI | DMAR_CAP_FL1GP | DMAR_CAP_PHMR | DMAR_CAP_PLMR | DMAR_CAP_AFL));
+	val64 |= (DMAR_CAP_PSI | DMAR_CAP_CM); /* Always set capability bits */
 
 	/* set number of fault registers */
-	val64 = dmar_set_bitslice(val64, VTD_CAP_NFR_MASK, VTD_CAP_NFR_POS, VTD_FCRD_REG_NR - 1U);
+	val64 = dmar_set_bitslice(val64, DMAR_CAP_NFR_MASK, DMAR_CAP_NFR_POS, DMAR_FCRD_REG_NR - 1U);
 	viommu->frcd_index = 0U;
-	viommu->frcd_offset = dmar_get_bitslice(val64,VTD_CAP_FRO_MASK, VTD_CAP_FRO_POS);
+	viommu->frcd_offset = dmar_get_bitslice(val64, DMAR_CAP_FRO_MASK, DMAR_CAP_FRO_POS);
 
 	viommu_write64(viommu, DMAR_CAP_REG, val64);
 	/*pr_err("%s, DMAR%d: Host cap: %-16llx Guest cap: %-16llx, frcd_offset:%lx", __func__,
@@ -1109,7 +1086,7 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 	/* extend Capability */
 	val64 = dmar_unit->ecap;
 	/* expose below extend capability bits only */
-	val64 &= (VTD_ECAP_SC | VTD_ECAP_DT | VTD_ECAP_QI | VTD_ECAP_C);
+	val64 &= (DMAR_ECAP_SC | DMAR_ECAP_DT | DMAR_ECAP_QI | DMAR_ECAP_C);
 	viommu_write64(viommu, DMAR_ECAP_REG, val64);
 	/*pr_err("%s, DMAR%d: Host ecap: %-16llx Guest ecap: %-16llx", __func__,
 		index, dmar_unit->ecap, viommu_read64(viommu, DMAR_ECAP_REG));*/

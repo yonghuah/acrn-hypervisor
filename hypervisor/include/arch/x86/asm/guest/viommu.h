@@ -7,37 +7,6 @@
 #ifndef VIOMMU_H
 #define VIOMMU_H
 
-#define VTD_CAP_ESIRTPS		(1UL << 62)
-#define VTD_CAP_FL5LP		(1UL << 60)
-#define VTD_CAP_PI		(1UL << 59)
-#define VTD_CAP_FL1GP		(1UL << 56)
-#define VTD_CAP_DRD		(1UL << 55)
-#define VTD_CAP_DWD		(1UL << 54)
-#define VTD_CAP_PSI		(1UL << 39)
-#define VTD_CAP_CM		(1UL << 7)
-#define VTD_CAP_PHMR		(1UL << 6)
-#define VTD_CAP_PLMR		(1UL << 5)
-#define VTD_CAP_RWBF		(1UL << 4)
-#define VTD_CAP_AFL		(1UL << 3)
-
-#define VTD_ECAP_SC		(1UL << 7)
-#define VTD_ECAP_DT		(1UL << 2)
-#define VTD_ECAP_QI		(1UL << 1)
-#define VTD_ECAP_C		(1UL << 0)  /* Page Walk Coherent */
-
-#define VTD_CAP_FRO_POS		(24U)
-#define VTD_CAP_FRO_MASK	(0x3FFUL << VTD_CAP_FRO_POS)
-
-#define VTD_CAP_NFR_POS		(40U)
-#define VTD_CAP_NFR_MASK	(0xFFUL << VTD_CAP_NFR_POS)
-
-#define IQ_QUEUE_QS_MASK	(0x7)
-#define IQ_QUEUE_DW(iqa)	(((iqa) >> 11U) & 1UL)
-#define IQ_INV_DESC_SIZE(dw)	((dw) ? 32U : 16U )
-#define IQ_IQT_MASK(dw)		((dw) ? 0x3FFE0 : 0x7FFF0)
-
-/* Nuber of Fault Record Registers */
-#define VTD_FCRD_REG_NR		(1UL)
 
 #define VIOMMU_DEBUG 1
 
@@ -50,11 +19,11 @@ struct acrn_viommu {
 
 	uint64_t qi_queue;
 	uint32_t qi_queue_size;
-	uint32_t qi_dw;
-	uint32_t frcd_index;
-	uint32_t frcd_offset;
+	uint32_t qi_dw; /*todo*/
+	uint32_t frcd_index; /*todo */
+	uint32_t frcd_offset; /*todo*/
 
-	uint8_t regs[4096];
+	uint8_t regs[PAGE_SIZE];
 	struct pgtable shadow_pgtable;
 	uint64_t shadow_pml4[MAX_GUEST_IOMMU_DID];
 	uint64_t guest_pml4[MAX_GUEST_IOMMU_DID];
