@@ -155,6 +155,25 @@ static int32_t register_hrhd_units(void)
 	return ret;
 }
 
+uint32_t iommu_read32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
+{
+	return mmio_read32(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
+
+uint64_t iommu_read64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
+{
+	return mmio_read64(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
+
+void iommu_write32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint32_t value)
+{
+	mmio_write32(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
+
+void iommu_write64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint64_t value)
+{
+	mmio_write64(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
+}
 
 static inline void dmar_wait_completion(const struct dmar_drhd_rt *dmar_unit, uint32_t offset,
 	uint32_t mask, uint32_t pre_condition, uint32_t *status)
@@ -898,36 +917,26 @@ static void dmar_disable_qi(struct dmar_drhd_rt *dmar_unit)
 static void prepare_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	dev_dbg(DBG_LEVEL_IOMMU, "enable dmar uint [0x%x]", dmar_unit->drhd->reg_base_addr);
-
-
 	dmar_setup_interrupt(dmar_unit);
-
-	dmar_set_intr_remap_table(dmar_unit);
-
-	dmar_enable_qi(dmar_unit);
-
 	dmar_set_root_table(dmar_unit);
+	dmar_enable_qi(dmar_unit);
+	dmar_set_intr_remap_table(dmar_unit);
 }
 
 static void enable_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	dev_dbg(DBG_LEVEL_IOMMU, "enable dmar uint [0x%x]", dmar_unit->drhd->reg_base_addr);
-
-	dmar_invalid_iec_global(dmar_unit);
-
 	dmar_invalid_context_cache_global(dmar_unit);
 	dmar_invalid_iotlb_global(dmar_unit);
+	dmar_invalid_iec_global(dmar_unit);
 	dmar_enable_translation(dmar_unit);
 }
 
 static void disable_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	dmar_disable_qi(dmar_unit);
-
 	dmar_disable_translation(dmar_unit);
-
 	dmar_fault_event_mask(dmar_unit);
-
 	dmar_disable_intr_remapping(dmar_unit);
 }
 
@@ -937,7 +946,6 @@ static void suspend_dmar(struct dmar_drhd_rt *dmar_unit)
 
 	dmar_invalid_context_cache_global(dmar_unit);
 	dmar_invalid_iotlb_global(dmar_unit);
-
 	dmar_invalid_iec_global(dmar_unit);
 
 	disable_dmar(dmar_unit);
@@ -958,7 +966,6 @@ static void resume_dmar(struct dmar_drhd_rt *dmar_unit)
 	}
 	prepare_dmar(dmar_unit);
 	enable_dmar(dmar_unit);
-
 	dmar_enable_intr_remapping(dmar_unit);
 }
 

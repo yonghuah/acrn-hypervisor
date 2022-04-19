@@ -637,7 +637,6 @@ struct dmar_drhd_rt {
 	spinlock_t lock;
 
 	struct dmar_drhd *drhd;
-
 	uint64_t root_table_addr;
 	uint64_t ir_table_addr;
 	uint64_t irte_alloc_bitmap[MAX_IR_ENTRIES / 64U];
@@ -658,6 +657,7 @@ struct dmar_drhd_rt {
 	uint16_t ecap_iotlb_offset;
 	uint32_t fault_state[IOMMU_FAULT_REGISTER_STATE_NUM]; /* 32bit registers */
 };
+
 #ifdef CONFIG_ACPI_PARSE_ENABLED
 int32_t parse_dmar_table(struct dmar_info *plat_dmar_info);
 #endif
@@ -672,27 +672,6 @@ static inline uint64_t dmar_set_bitslice(uint64_t var, uint64_t mask, uint32_t p
 	return ((var & ~mask) | ((val << pos) & mask));
 }
 
-static inline uint32_t iommu_read32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
-{
-	return mmio_read32(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
-}
-
-static inline uint64_t iommu_read64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset)
-{
-	return mmio_read64(hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
-}
-
-static inline void iommu_write32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint32_t value)
-{
-	mmio_write32(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
-}
-
-static inline void iommu_write64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint64_t value)
-{
-	mmio_write64(value, hpa2hva(dmar_unit->drhd->reg_base_addr + offset));
-}
-
-struct dmar_drhd_rt *get_drhd_unit(uint32_t index);
 
 /**
  * @file vtd.h
@@ -854,11 +833,15 @@ void dmar_free_irte(const struct intr_source *intr_src, uint16_t index);
  *
  */
 void iommu_flush_cache(const void *p, uint32_t size);
+
+uint32_t iommu_read32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset);
+uint64_t iommu_read64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset);
+void iommu_write32(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint32_t value);
+void iommu_write64(const struct dmar_drhd_rt *dmar_unit, uint32_t offset, uint64_t value);
+struct dmar_drhd_rt *get_drhd_unit(uint32_t index);
+void dmar_issue_qi_request(struct dmar_drhd_rt *dmar_unit, struct dmar_entry invalidate_desc);
+bool dmar_issue_qi_complete(struct dmar_drhd_rt *dmar_unit);
 /**
   * @}
   */
-
-void dmar_issue_qi_request(struct dmar_drhd_rt *dmar_unit, struct dmar_entry invalidate_desc);
-bool dmar_issue_qi_complete(struct dmar_drhd_rt *dmar_unit);
-
 #endif

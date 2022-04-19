@@ -117,27 +117,27 @@ static inline bool shadow_no_large_page_support(__unused enum _page_table_level 
 static inline void shadow_nop_tweak_exe_right(uint64_t *entry __attribute__((unused))) {}
 static inline void shadow_nop_recover_exe_right(uint64_t *entry __attribute__((unused))) {}
 
-static uint32_t viommu_read32(const struct acrn_viommu *viommu, uint32_t offset)
+static inline uint32_t viommu_read32(const struct acrn_viommu *viommu, uint32_t offset)
 {
 	return  *((uint32_t *)(viommu->regs + offset));
 }
 
-static uint64_t viommu_read64(const struct acrn_viommu *viommu, uint32_t offset)
+static inline uint64_t viommu_read64(const struct acrn_viommu *viommu, uint32_t offset)
 {
 	return *((uint64_t *)(viommu->regs + offset));
 }
 
-static void viommu_write32(const struct acrn_viommu *viommu, uint32_t offset, uint32_t value)
+static inline void viommu_write32(const struct acrn_viommu *viommu, uint32_t offset, uint32_t value)
 {
 	*((uint32_t *)(viommu->regs + offset)) = value;
 }
 
-static void viommu_write64(const struct acrn_viommu *viommu, uint32_t offset, uint64_t value)
+static inline void viommu_write64(const struct acrn_viommu *viommu, uint32_t offset, uint64_t value)
 {
 	*((uint64_t *)(viommu->regs + offset)) = value;
 }
 
-static bool is_leaf_entry(uint64_t ept_entry, enum _page_table_level pt_level)
+static inline bool is_leaf_entry(uint64_t ept_entry, enum _page_table_level pt_level)
 {
 	return (((ept_entry & PAGE_PSE) != 0U) || (pt_level == IA32E_PT));
 }
@@ -1130,7 +1130,6 @@ void init_viommu(struct acrn_vm *vm)
 
 		viommu_units[i].drhd_rt = dmar_unit;
 
-		/* Assuming one DMAR unit can be seen by one guest only */
 		viommu_units[i].vm = vm;
 
 		init_readonly_registers(&viommu_units[i]);
