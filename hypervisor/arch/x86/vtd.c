@@ -899,22 +899,10 @@ static void prepare_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	dev_dbg(DBG_LEVEL_IOMMU, "enable dmar uint [0x%x]", dmar_unit->drhd->reg_base_addr);
 
-#ifdef CONFIG_VIOMMU_ENABLED
-	/*
-	 * Doing Interrupt Remapping in hypervisor while doing IO address
-	 * translation in guests
-	 */
-	dmar_unit->features = DMAR_FEAT_IR;
-#else
-	dmar_unit->features = DMAR_FEAT_IOM | DMAR_FEAT_IR;
-#endif
-
 
 	dmar_setup_interrupt(dmar_unit);
 
-	if (dmar_unit->features & DMAR_FEAT_IR) {
-		dmar_set_intr_remap_table(dmar_unit);
-	}
+	dmar_set_intr_remap_table(dmar_unit);
 
 	dmar_enable_qi(dmar_unit);
 
@@ -925,9 +913,7 @@ static void enable_dmar(struct dmar_drhd_rt *dmar_unit)
 {
 	dev_dbg(DBG_LEVEL_IOMMU, "enable dmar uint [0x%x]", dmar_unit->drhd->reg_base_addr);
 
-	if (dmar_unit->features & DMAR_FEAT_IR) {
-		dmar_invalid_iec_global(dmar_unit);
-	}
+	dmar_invalid_iec_global(dmar_unit);
 
 	dmar_invalid_context_cache_global(dmar_unit);
 	dmar_invalid_iotlb_global(dmar_unit);
@@ -942,9 +928,7 @@ static void disable_dmar(struct dmar_drhd_rt *dmar_unit)
 
 	dmar_fault_event_mask(dmar_unit);
 
-	if (dmar_unit->features & DMAR_FEAT_IR) {
-		dmar_disable_intr_remapping(dmar_unit);
-	}
+	dmar_disable_intr_remapping(dmar_unit);
 }
 
 static void suspend_dmar(struct dmar_drhd_rt *dmar_unit)
@@ -954,9 +938,7 @@ static void suspend_dmar(struct dmar_drhd_rt *dmar_unit)
 	dmar_invalid_context_cache_global(dmar_unit);
 	dmar_invalid_iotlb_global(dmar_unit);
 
-	if (dmar_unit->features & DMAR_FEAT_IR) {
-		dmar_invalid_iec_global(dmar_unit);
-	}
+	dmar_invalid_iec_global(dmar_unit);
 
 	disable_dmar(dmar_unit);
 
@@ -977,9 +959,7 @@ static void resume_dmar(struct dmar_drhd_rt *dmar_unit)
 	prepare_dmar(dmar_unit);
 	enable_dmar(dmar_unit);
 
-	if (dmar_unit->features & DMAR_FEAT_IR) {
-		dmar_enable_intr_remapping(dmar_unit);
-	}
+	dmar_enable_intr_remapping(dmar_unit);
 }
 
 static inline bool is_dmar_unit_ignored(const struct dmar_drhd_rt *dmar_unit)

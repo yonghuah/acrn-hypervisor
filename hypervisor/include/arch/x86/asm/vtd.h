@@ -636,11 +636,6 @@ struct dmar_drhd_rt {
 	uint32_t index;
 	spinlock_t lock;
 
-#define DMAR_FEAT_IOM  (1U << 0U)      /* IO address translation */
-#define DMAR_FEAT_IR   (1U << 1U)      /* Interrupt remapping */
-#define DMAR_FEAT_PI   (1U << 2U)      /* Posted Interrupt */
-	uint32_t features;
-
 	struct dmar_drhd *drhd;
 
 	uint64_t root_table_addr;
