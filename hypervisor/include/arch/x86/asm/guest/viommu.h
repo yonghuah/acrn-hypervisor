@@ -11,20 +11,35 @@
 #define VIOMMU_DEBUG 1
 
 #define MAX_GUEST_IOMMU_DID 128
+
 struct acrn_viommu {
 	spinlock_t lock;
 
 	struct acrn_vm *vm;
 	struct dmar_drhd_rt *drhd_rt;
 
+	/* Guest IQ base address */
 	uint64_t qi_queue;
-	uint32_t qi_queue_size;
-	uint32_t qi_dw; /*todo*/
-	uint32_t frcd_index; /*todo */
-	uint32_t frcd_offset; /*todo*/
 
+	/* Guest IQ size in bytes */
+	uint32_t qi_queue_size;
+
+	/* IQ Descriptor width, 0: 128-bit descriptors, 1: 256-bit descriptors */
+	uint32_t qi_dw;
+
+	/* Guest fault record index */
+	uint32_t frcd_index;
+
+	/* Guest fault recording register offset */
+	uint32_t frcd_offset;
+
+	/* vIOMMU register page */
 	uint8_t regs[PAGE_SIZE];
+
+	/* Shadow page table manangement structure */
 	struct pgtable shadow_pgtable;
+
+	/*Below two tables store pointers to shadow and guest page tables */
 	uint64_t shadow_pml4[MAX_GUEST_IOMMU_DID];
 	uint64_t guest_pml4[MAX_GUEST_IOMMU_DID];
 
