@@ -80,7 +80,15 @@
 
 /* Nuber of Fault Record Registers */
 #define DMAR_FCRD_REG_NR		(1UL)
+#define DMAR_FECTL_IM_MASK		(1U << 31)
+#define DMAR_FECTL_IP_MASK		(1U << 30)
 
+#define DMAR_FSTS_PFO			(1U << 0)
+#define DMAR_FSTS_PPF			(1U << 1)
+#define DMAR_FSTS_IQE			(1U << 4)
+#define DMAR_FSTS_ICE			(1U << 5)
+#define DMAR_FSTS_ITE			(1U << 6)
+#define DMAR_FSTS_FRI_MASK		(0xFFU << 8)
 
 #define ROOT_ENTRY_LOWER_PRESENT_POS        (0U)
 #define ROOT_ENTRY_LOWER_PRESENT_MASK       (1UL << ROOT_ENTRY_LOWER_PRESENT_POS)

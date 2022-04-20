@@ -520,7 +520,7 @@ static int context_cache_inv_device(struct acrn_viommu *viommu, __unused uint32_
 				viommu->guest_pml4[guest_did] = (uint64_t)gpa2hva(viommu->vm, guest_pml4);
 			} else if (((uint64_t)gpa2hva(viommu->vm, guest_pml4)) != viommu->guest_pml4[guest_did]) {
 				 /* Guest is trying to invalidate page table for current domain */
-				pr_err("DMAR%d, DID: Re-Delete shadow pml4:%llx", viommu->drhd_rt->index, guest_did, shadow_pml4);
+				pr_err("DMAR%d, DID: Invalidate guest page table: %llx", viommu->drhd_rt->index, guest_did);
 				free_shadow_table(viommu, guest_did);
 				viommu->guest_pml4[guest_did] = guest_pml4;
 			}
@@ -739,7 +739,7 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 
 		iotlb_inv_psi(viommu, entry);
 		remap_iotlb_desc_did(viommu, entry, guest_did);
-		if (!(viommu->drhd_rt->cap & DMAR_CAP_PSI)) { // No PSI support on host
+		if (!(viommu->drhd_rt->cap & DMAR_CAP_PSI)) { /* No PSI support on host */
 			pr_err("%s, DMAR%d, IOTLB_PSI(Not support Natively), did:%d, iova:0x%llx, pages:%d.",
 				__func__, index, (entry->lo_64 >> 16) & 0xFFFF, entry->hi_64 & (~0xfff), 1 << (entry->hi_64 & 0x3f));
 
@@ -760,44 +760,47 @@ static bool process_iotlb_desc(struct acrn_viommu *viommu, struct dmar_entry *en
 	return write_iqt;
 }
 
-static int handle_fsts_write(struct acrn_viommu *viommu, uint32_t fsts)
+#define FSTS_RW1CS_BITS (DMAR_FSTS_PFO | DMAR_FSTS_IQE | DMAR_FSTS_ICE | DMAR_FSTS_ITE)
+static int handle_fsts_write(struct acrn_viommu *viommu, uint32_t req_fsts)
 {
-	//pr_err("%s, DMAR%d, value:%llx", __func__, viommu->drhd_rt->index, fsts);
+	uint32_t fsts = viommu_read32(viommu, DMAR_FSTS_REG);
+	uint32_t rw1cs_bits = req_fsts & FSTS_RW1CS_BITS;
+
+	if (req_fsts & DMAR_FSTS_PFO) {
+		/*reset FRI*/
+		fsts &= ~DMAR_FSTS_FRI_MASK;
+	}
+	fsts &= ~rw1cs_bits;
+	viommu_write32(viommu, DMAR_FSTS_REG, fsts);
+
 	return 0;
 }
 
-#define VTD_FECTL_IM_MASK (1U << 31)
-#define VTD_FECTL_IP_MASK (1U << 30)
 static int handle_fectl_write(struct acrn_viommu *viommu, uint32_t req_fectl)
 {
 	uint32_t fectl = viommu_read32(viommu, DMAR_FECTL_REG);
 	uint32_t req_bits = req_fectl ^ fectl;
 
-	//only IM(bit31) can be set.
-	if ((req_bits & VTD_FECTL_IM_MASK) != 0U) {
-		/* handle possible pending interrupt.*/
-		if (req_fectl & VTD_FECTL_IM_MASK) {
-			/*Set IM*/
+	/* only IM(bit31) can be set */
+	if ((req_bits & DMAR_FECTL_IM_MASK) != 0U) {
+		if (req_fectl & DMAR_FECTL_IM_MASK) {
+			if ((fectl & DMAR_FECTL_IM_MASK) == 0U) {
+				/*Set IM*/
+				fectl |= (DMAR_FECTL_IM_MASK);
+				viommu_write32(viommu, DMAR_FECTL_REG, fectl);
+			}
 		} else {
-			/*Clear  IM*/
+			if ((fectl & DMAR_FECTL_IM_MASK) != 0U) {
+				/*Clear IM*/
+				fectl &= (~DMAR_FECTL_IM_MASK);
+				viommu_write32(viommu, DMAR_FECTL_REG, fectl);
+				if (fectl & DMAR_FECTL_IP_MASK) {
+					/* Todo: report potential pending fault event */
+				}
+			}
 		}
-		fectl &= (~VTD_FECTL_IM_MASK);
-		fectl |= (req_fectl & VTD_FECTL_IM_MASK);
-		viommu_write32(viommu, DMAR_FECTL_REG, fectl);
 	}
-	//pr_err("%s, DMAR%d, value:%llx", __func__, viommu->drhd_rt->index, fectl);
-	return 0;
-}
 
-void generate_dmar_interrupt(__unused struct acrn_viommu *viommu, __unused uint32_t msi_addr_reg, __unused uint32_t msi_data_reg)
-{
-	/*Read addr & data from registers*/
-
-	/* Inject MSI interrupt to guest with message addr & data */
-}
-
-int report_fault(__unused struct acrn_viommu *viommu, __unused uint32_t reason)
-{
 	return 0;
 }
 
@@ -990,7 +993,6 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 		break;
 
 	case DMAR_FSTS_REG:
-		viommu_write32(viommu, offset, (uint32_t)mmio->value);
 		handle_fsts_write(viommu, mmio->value);
 		break;
 
@@ -1093,6 +1095,7 @@ static void init_readonly_registers(struct acrn_viommu *viommu)
 
 	/* initialize FSTS */
 	viommu_write32(viommu, DMAR_FSTS_REG, 0U);
+	viommu_write32(viommu, DMAR_FECTL_REG, DMAR_FECTL_IM_MASK);
 }
 
 void init_viommu(struct acrn_vm *vm)
@@ -1671,7 +1674,7 @@ void viommu_debug(uint64_t op, uint64_t dmar_index, uint64_t did, uint64_t addr,
 	uint32_t i, j, loop = 0;
 	struct acrn_viommu *vtd;
 	uint64_t pml4, size = 0;
-	uint64_t *pte;
+	const uint64_t *pte;
 	uint64_t addr_end = addr + (nr_pages << 12);
 	struct dmar_drhd_rt *iommu = NULL;
 	uint64_t value;
