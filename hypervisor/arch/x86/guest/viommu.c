@@ -76,19 +76,9 @@ static inline void shadow_clflush_pagewalk(const void* etry)
 	iommu_flush_cache(etry, sizeof(uint64_t));
 }
 
-static inline bool shadow_large_1G_page_support(enum _page_table_level level, __unused uint64_t prot)
+static inline bool shadow_large_page_support(enum _page_table_level level, __unused uint64_t prot)
 {
 	return ((level == IA32E_PD) || (level == IA32E_PDPT));
-}
-
-static inline bool shadow_large_2M_page_support(enum _page_table_level level, __unused uint64_t prot)
-{
-	return (level == IA32E_PD);
-}
-
-static inline bool shadow_no_large_page_support(__unused enum _page_table_level level, __unused uint64_t prot)
-{
-	return false;
 }
 
 static inline void shadow_nop_tweak_exe_right(uint64_t *entry __attribute__((unused))) {}
@@ -175,39 +165,30 @@ void viommu_reserve_buffer_for_shadow_pages(void)
 
 static void init_shadow_pgtable(struct acrn_viommu *viommu)
 {
+	static bool pool_init_done = false;
 	struct pgtable *table;
 	struct page_pool * pool;
-	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
 
 	table = &viommu->shadow_pgtable;
 
 	pool = &viommu_shadow_page_pool;
-	pool->start_page = viommu_shadow_pages;
-	pool->bitmap_size = get_shadow_page_num() / 64U;
-	pool->bitmap = viommu_shadow_page_bitmap;
-	pool->dummy_page = &viommu_shadow_dummy_pages;
+	if (!pool_init_done) {
+		pool->start_page = viommu_shadow_pages;
+		pool->bitmap_size = (VIOMMU_MAX_SHADOW_NUM * get_shadow_page_num()) / 64U;
+		pool->bitmap = viommu_shadow_page_bitmap;
+		pool->dummy_page = &viommu_shadow_dummy_pages;
 
-	spinlock_init(&pool->lock);
-	memset((void *)pool->bitmap, 0, pool->bitmap_size * sizeof(uint64_t));
-	pool->last_hint_id = 0UL;
+		spinlock_init(&pool->lock);
+		memset((void *)pool->bitmap, 0, pool->bitmap_size * sizeof(uint64_t));
+		pool->last_hint_id = 0UL;
+		pool_init_done = true;
+	}
 
 	table->pool = pool;
 	table->default_access_right = EPT_RD | EPT_WR;
 	table->pgentry_present_mask = EPT_RWX;
 	table->clflush_pagewalk = shadow_clflush_pagewalk;
-
-	/*
-	 * Intel VT-d Spec 10.4.2: Hardware implementations supporting a
-	 * specific large-page size must support all smaller large-page size.
-	 */
-	if ((iommu_cap_super_page_val(dmar_unit->cap) & 0x2U) != 0U) {
-		table->large_page_support = shadow_large_1G_page_support;
-	} else if ((iommu_cap_super_page_val(dmar_unit->cap) & 0x1U) != 0U) {
-		table->large_page_support = shadow_large_2M_page_support;
-	} else {
-		table->large_page_support = shadow_no_large_page_support;
-	}
-
+	table->large_page_support = shadow_large_page_support;
 	table->tweak_exe_right = shadow_nop_tweak_exe_right;
 	table->recover_exe_right = shadow_nop_recover_exe_right;
 }
