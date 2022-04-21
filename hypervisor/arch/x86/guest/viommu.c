@@ -811,20 +811,24 @@ static void handle_iqt_write(struct acrn_viommu *viommu, uint16_t tail)
 
 		case DMAR_INV_WAIT_DESC:
 		{
-			if (entry->lo_64 & (1 << 4)) {
-				pr_err("%s, IF is set in WAIT Desc...", __func__);
-			}
-
-			if (dmar_issue_qi_complete(dmar_unit)) {
-				/* set the Done Status in the wait entry */
-				status_ptr = (uint32_t *)gpa2hva(viommu->vm, entry->hi_64);
-				*status_ptr = (uint32_t)(entry->lo_64 >> 32U);
+			/* Currently, Invalidation Completion Event is not supported */
+			if ((entry->lo_64 & DMAR_INV_WAIT_IF) == 0UL) {
+				if (dmar_issue_qi_complete(dmar_unit)) {
+					/* set the Done Status in the wait entry */
+					status_ptr = (uint32_t *)gpa2hva(viommu->vm, (entry->hi_64 & (~0x3UL)));
+					if (status_ptr != NULL) {
+						*status_ptr = (uint32_t)(entry->lo_64 >> 32U);
+					} else {
+						pr_fatal("%s, Invalid Status Address(GPA):%llx", __func__, entry->hi_64);
+					}
+				}
+			} else {
+				pr_fatal("%s, Invalidation Completion Event is not supported yet.", __func__);
 			}
 
 			break;
 		}
 
-		/* Todo: Dev-TLB flush and others..?*/
 		default:
 			pr_err("Unhandled IQ request: vDMAR%d entry lo %llx hi 0x%llx", dmar_unit->index, entry->lo_64, entry->hi_64);
 			break;
