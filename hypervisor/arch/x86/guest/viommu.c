@@ -511,7 +511,7 @@ static int context_cache_inv_device(struct acrn_viommu *viommu, __unused uint32_
 		p_guest_context_e = (struct dmar_entry *)gpa2hva(viommu->vm, guest_root_e->lo_64 & PAGE_MASK) + devfun;
 		if (dmar_get_bitslice(p_guest_context_e->lo_64, CTX_ENTRY_LOWER_P_MASK, CTX_ENTRY_LOWER_P_POS) != 0UL) {
 			did = dmar_get_bitslice(p_guest_context_e->hi_64, CTX_ENTRY_UPPER_DID_MASK, CTX_ENTRY_UPPER_DID_POS);
-			ASSERT(did < MAX_GUEST_IOMMU_DID, "Guest DID overflow"); /*this assert check is for did remapping logic*/
+			ASSERT(did < MAX_GUEST_IOMMU_DID, "Guest DID overflow");
 
 			guest_pml4 = p_guest_context_e->lo_64 & CTX_ENTRY_LOWER_SLPTPTR_MASK;
 			ASSERT(guest_pml4 != 0UL, "");/*Todo: inject error to guest. */
@@ -1026,6 +1026,7 @@ static int32_t viommu_mmio_handler(struct io_request *io_req, void *private_data
 
 static void init_viommu_registers(struct acrn_viommu *viommu)
 {
+#define CAP_RSV_BITS_MASK ((7UL << 13U) | (1UL << 38U) | (3UL << 57) | (1UL << 61U))
 	uint64_t val64;
 	struct dmar_drhd_rt *dmar_unit = viommu->drhd_rt;
 
@@ -1036,7 +1037,19 @@ static void init_viommu_registers(struct acrn_viommu *viommu)
 	val64 = dmar_unit->cap;
 	 /* Always clear bits. */
 	val64 &= (~(DMAR_CAP_ESIRTPS | DMAR_CAP_FL5LP | DMAR_CAP_PI | DMAR_CAP_FL1GP | DMAR_CAP_PHMR | DMAR_CAP_PLMR | DMAR_CAP_AFL));
+	val64 &= (~CAP_RSV_BITS_MASK); /*clear reserve bits*/
 	val64 |= (DMAR_CAP_PSI | DMAR_CAP_CM); /* Always set capability bits */
+
+	/*
+	 * number of physial IOMMU domains must be greater than hardcoded number
+	 * for guest, as some domain-id need to be reserved for hypervisor native usage.
+	 */
+	if (iommu_cap_ndoms(dmar_unit->cap) > iommu_cap_ndoms(GUEST_IOMMU_CAP_ND)) {
+		val64 &= (~DMAR_CAP_ND_MASK);
+		val64 |= (GUEST_IOMMU_CAP_ND & 0x7U);
+	} else {
+		panic("Native IOMMU domain-id space is not enough, please tune GUEST_IOMMU_CAP_ND.");
+	}
 
 	/* set number of fault registers */
 	val64 = dmar_set_bitslice(val64, DMAR_CAP_NFR_MASK, DMAR_CAP_NFR_POS, DMAR_FCRD_REG_NR - 1U);
@@ -1414,7 +1427,7 @@ static void compare_guest_and_shadow_pgtable_all(bool print_err, uint64_t max_pr
 			return;
 		}
 
-		for (did = 0; did < 128; did++) {
+		for (did = 0; did < MAX_GUEST_IOMMU_DID; did++) {
 			if ((viommu->shadow_pml4[did] != 0UL) && (viommu->guest_pml4[did] != 0UL)) {
 				walk_guest_pgtable(viommu, did, validate_guest_mapping_in_shadow);
 			}
@@ -1424,7 +1437,7 @@ static void compare_guest_and_shadow_pgtable_all(bool print_err, uint64_t max_pr
 	for (i = 0; i < plat_dmar_info.drhd_count; i++) {
 		viommu = &viommu_units[i];
 		index = viommu->drhd_rt->index;
-		for (did = 0; did < 128; did++) {
+		for (did = 0; did < MAX_GUEST_IOMMU_DID; did++) {
 			if (viommu->guest_pml4[did] != 0UL) {
 				dom = &(sanity_chk_iommu_unit[index].dom[did]);
 				dump_sanity_chk_info(viommu, did, dom, true);
@@ -1529,7 +1542,7 @@ static void check_shadow_pgtable_all(bool print_err, uint64_t max_print)
 			return;
 		}
 
-		for (did = 0; did < 128; did++) {
+		for (did = 0; did < MAX_GUEST_IOMMU_DID; did++) {
 			if ((viommu->shadow_pml4[did] != 0UL) && (viommu->guest_pml4[did] != 0UL)) {
 				walk_shadow_pgtable(viommu, did, validate_shadow_mappings);
 			}
@@ -1539,7 +1552,7 @@ static void check_shadow_pgtable_all(bool print_err, uint64_t max_print)
 	for (i = 0; i < plat_dmar_info.drhd_count; i++) {
 		viommu = &viommu_units[i];
 		index = viommu->drhd_rt->index;
-		for (did = 0; did < 128; did++) {
+		for (did = 0; did < MAX_GUEST_IOMMU_DID; did++) {
 			if (viommu->guest_pml4[did] != 0UL) {
 				dom = &(sanity_chk_iommu_unit[index].dom[did]);
 				dump_sanity_chk_info(viommu, did, dom, false);

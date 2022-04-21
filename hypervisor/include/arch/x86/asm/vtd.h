@@ -61,6 +61,7 @@
 #define DMAR_CAP_PLMR		(1UL << 5)
 #define DMAR_CAP_RWBF		(1UL << 4)
 #define DMAR_CAP_AFL		(1UL << 3)
+#define DMAR_CAP_ND_MASK	(7UL << 0)
 
 #define DMAR_ECAP_SC		(1UL << 7)
 #define DMAR_ECAP_DT		(1UL << 2)
