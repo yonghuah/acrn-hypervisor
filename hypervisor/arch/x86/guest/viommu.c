@@ -252,11 +252,8 @@ static void delete_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 	viommu->shadow_pml4[guest_did] = 0UL;
 }
 
-static int create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
+static void create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 {
-	int status = 0;
-	uint64_t shadow_pml4;
-
 	/*
 	 * VT-d specification #9.3, Context-entries programmed with the same domain identifier
 	 * must always reference same address translation(SLPTPTR field), so shadow table is created
@@ -264,20 +261,9 @@ static int create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 	 */
 	if (viommu->shadow_pml4[guest_did] == 0UL) {
 		/* create IOMMU shadow table for this guest IOMMU domain */
-		shadow_pml4 = (uint64_t)pgtable_create_root(&viommu->shadow_pgtable);
-		if (shadow_pml4 == 0UL) {
-			pr_err("%s, failed to create shadow table for DMAR%d, did:%d.",
-				__func__, viommu->drhd_rt->index, guest_did);
-			status = -1;
-		}
-		viommu->shadow_pml4[guest_did] = shadow_pml4;
-		/*pr_err("DMAR%d, DID:%d, create shadow pml4:%llx", viommu->drhd_rt->index, guest_did, shadow_pml4);*/
-	}/* else {
-		pr_err("DMAR%d, DID:%d, shadow pml4:%llx, has been created.", viommu->drhd_rt->index, guest_did, viommu->shadow_pml4[guest_did]);
-	}*/
+		viommu->shadow_pml4[guest_did] = (uint64_t)pgtable_create_root(&viommu->shadow_pgtable);
+	}
 
-
-	return status;
 }
 
 static bool iommu_rsvd_region(__unused struct acrn_viommu *viommu, __unused uint16_t did, uint64_t iova, uint64_t gpa)
@@ -509,7 +495,8 @@ static int context_cache_inv_device(struct acrn_viommu *viommu, __unused uint32_
 			vbdf.fields.bus = bus;
 			vbdf.fields.devfun = devfun;
 			p_shadow_context_e = get_shadow_context_entry(viommu, &vbdf);
-			if((create_shadow_table(viommu, did) == 0) && (p_shadow_context_e != NULL)) {
+			if(p_shadow_context_e != NULL) {
+				create_shadow_table(viommu, did);
 				/* update shadow context entry */
 				shadow_pml4 = viommu->shadow_pml4[did];
 				p_shadow_context_e->lo_64 = p_guest_context_e->lo_64;
