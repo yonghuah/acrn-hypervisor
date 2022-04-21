@@ -104,9 +104,9 @@ static inline void viommu_write64(const struct acrn_viommu *viommu, uint32_t off
 	*((uint64_t *)(viommu->regs + offset)) = value;
 }
 
-static inline bool is_leaf_entry(uint64_t ept_entry, enum _page_table_level pt_level)
+static inline bool is_leaf_entry(uint64_t entry)
 {
-	return (((ept_entry & PAGE_PSE) != 0U) || (pt_level == IA32E_PT));
+	return ((entry & PAGE_PSE) != 0U);
 }
 
 static inline uint64_t get_guest_pml4(struct acrn_viommu *viommu, uint32_t did)
@@ -224,13 +224,13 @@ static void free_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 			for (j = 0UL; j < PTRS_PER_PDPTE; j++) {
 				shadow_pdpte = pdpte_offset(shadow_pml4e, j << PDPTE_SHIFT);
 				if (!pgentry_present(table, (*shadow_pdpte)) ||
-				    is_leaf_entry(*shadow_pdpte, IA32E_PDPT)) {
+				    is_leaf_entry(*shadow_pdpte)) {
 					continue;
 				}
 				for (k = 0UL; k < PTRS_PER_PDE; k++) {
 					shadow_pde = pde_offset(shadow_pdpte, k << PDE_SHIFT);
 					if (!pgentry_present(table, (*shadow_pde)) ||
-					    is_leaf_entry(*shadow_pde, IA32E_PD)) {
+					    is_leaf_entry(*shadow_pde)) {
 						continue;
 					}
 					free_page(table->pool, (struct page *)((*shadow_pde) & EPT_ENTRY_PFN_MASK));
@@ -462,7 +462,7 @@ static uint32_t remap_did(__unused struct acrn_viommu *viommu, uint32_t guest_di
 	return (guest_did + HV_RSV_DID_NUM);
 }
 
-static int context_cache_inv_device(struct acrn_viommu *viommu, __unused uint32_t cc_did, uint32_t sid, __unused uint32_t fm)
+static int context_cache_inv_device(struct acrn_viommu *viommu, __unused uint32_t cc_did, uint32_t sid, uint32_t fm)
 {
 	int status = -1;
 	union pci_bdf vbdf;
@@ -470,6 +470,10 @@ static int context_cache_inv_device(struct acrn_viommu *viommu, __unused uint32_
 	uint64_t shadow_pml4, guest_pml4;
 	struct dmar_entry *guest_root_e;
 	struct dmar_entry *p_guest_context_e, *p_shadow_context_e;
+
+	if (fm != 0U) {
+		pr_fatal("%s, Can't support function mask.", __func__);
+	}
 
 	bus = (sid >> 8) & 0xFF;
 	devfun = sid & 0xFF;
