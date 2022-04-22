@@ -29,13 +29,7 @@ typedef uint64_t (*pgtable_mapping_handler)(struct acrn_viommu *viommu, uint16_t
  * are initialized to NULL and shall never be accessed.
  */
 static const struct pgtable guest_pgtable = {
-	.default_access_right = 0UL,
-	.pgentry_present_mask = EPT_RWX,
-	.pool = NULL,
-	.large_page_support = NULL,
-	.clflush_pagewalk = NULL,
-	.tweak_exe_right = NULL,
-	.recover_exe_right = NULL,
+	.pgentry_present_mask = EPT_RWX
 };
 
 /*
@@ -266,26 +260,11 @@ static void create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 
 }
 
-static bool iommu_rsvd_region(__unused struct acrn_viommu *viommu, __unused uint16_t did, uint64_t iova, uint64_t gpa)
-{
-	/*Todo: RMRR region shall be parsed from native ACPI table*/
-	return (iova == gpa);
-}
-
 static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, uint64_t iova, uint64_t gpa, uint64_t size, uint64_t permit)
 {
-	bool add_map = false;
 	const uint64_t *shadow_pte;
 	uint64_t hpa, pte_size, synced_size = size;
 	uint64_t *shadow_pml4 = (uint64_t *)viommu->shadow_pml4[did];
-#if CHECK_TIME
-	uint64_t t1, t2;
-#endif
-
-	if (((permit != 0UL) && (size != PTE_SIZE) && (size != PDE_SIZE) && (size != PDPTE_SIZE)) ||(size == 0UL)) {
-		pr_err("%s, WARNING: #DMAR%d, did: %d, iova:%llx, HIT Un-aligned size:%llx for shadow maping.",
-			__func__, viommu->drhd_rt->index, did, iova, size);
-	}
 
 	shadow_pte = pgtable_lookup_entry(shadow_pml4, iova, &pte_size, &guest_pgtable);
 	if (permit != 0UL) { /* Add mapping to shadow table */
@@ -293,45 +272,16 @@ static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, ui
 			/* corner case: mapping is already present in shadow table, remove it first */
 			viommu_shadow_del_mr(viommu, shadow_pml4, iova, pte_size);
 			synced_size = pte_size;
-			pr_err("%s, WARNING: Mapping is already present: DMAR%d, did: %d, iova:%llx, gpa:%llx, shadow_pte:%llx, req size::%llx, shadow_pte size:%llx",
-				__func__, viommu->drhd_rt->index, did, iova, gpa, *shadow_pte, size, pte_size);
 		}
 
 		hpa = gpa2hpa(viommu->vm, gpa);
-		if (iommu_rsvd_region(viommu, did, iova, gpa)) { /* For RMRR region, IOVA == GPA */
-			hpa = gpa;
-			add_map = true;
-		} else if (hpa != INVALID_HPA) {
-			add_map = true;
-		}
-
-		if (add_map) {
-#if CHECK_TIME
-			t1 = ticks_to_us(cpu_ticks());
-#endif
+		if (hpa != INVALID_HPA) {
 			viommu_shadow_add_mr(viommu, shadow_pml4, hpa, iova, size, permit);
-#if CHECK_TIME
-			t2 = ticks_to_us(cpu_ticks());
-			insert_time(RECORD_SHADOW_MAP, t2 - t1);
-			viommu->map_cnt[did]++;
-#endif
-		}
-	} else { /* remove mapping from from shadow */
-		if ((size == PDE_SIZE) || (size == PDPTE_SIZE)) {
-			pr_err("%s, Large page remove: DMAR%d, did: %d, iova:%llx, req size::%llx, shadow_pte size:%llx",
-				__func__, viommu->drhd_rt->index, did, iova, size, pte_size);
 		}
 
+	} else { /* remove mapping from from shadow */
 		if (shadow_pte) {
-#if CHECK_TIME
-			t1 = ticks_to_us(cpu_ticks());
-#endif
 			viommu_shadow_del_mr(viommu, shadow_pml4, iova, pte_size);
-#if CHECK_TIME
-			t2 = ticks_to_us(cpu_ticks());
-			insert_time(RECORD_SHADOW_UNMAP, t2 - t1);
-			viommu->unmap_cnt[did]++;
-#endif
 			synced_size = pte_size;
 		} else {
 			synced_size = PTE_SIZE;
@@ -1061,12 +1011,15 @@ void init_viommu(struct acrn_vm *vm)
 
 		init_shadow_pgtable(&viommu_units[i]);
 
+		/*
+		 * Currently, ACRN supports vIOMMU for service VM only, which can detect
+		 * IOMMU by parsing native ACPI table, hence need to keep identical IOMMU
+		 * register address base.
+		 */
 		register_mmio_emulation_handler(vm, viommu_mmio_handler,
 			dmar_unit->drhd->reg_base_addr,
 			dmar_unit->drhd->reg_base_addr + PAGE_SIZE,
 			(void *)&viommu_units[i], false);
-
-		dev_dbg(DBG_LEVEL_VIOMMU, "register MMIO %llx", dmar_unit->drhd->reg_base_addr);
 	}
 }
 
@@ -1159,6 +1112,11 @@ struct sanity_chk_domain {
 struct sanity_chk_viommu {
 	struct sanity_chk_domain dom[MAX_DID];
 };
+
+static bool iommu_rsvd_region(__unused struct acrn_viommu *viommu, __unused uint32_t did, uint64_t iova, uint64_t gpa)
+{
+	return (iova == gpa);
+}
 
 struct sanity_chk_viommu sanity_chk_iommu_unit[MAX_IOMMU];
 
@@ -1601,8 +1559,8 @@ void time_sum(void)
 			pr_err("%s: Record Index: %lld, av: %lld (us), max: %lld, min: %lld", tbl_name[i], record_index[i], av[i], max[i], min[i]);
 	}
 }
-#endif /*#if CHECK_TIME*/
 
+#endif /*#if CHECK_TIME*/
 #define GUEST_MAPPING_LOOKUP		0 /* full param list.*/
 #define SHADOW_MAPPING_LOOKUP		1 /* full param list*/
 #define SHOW_SHADOW_TBL_ADDR		2 /* op only */
