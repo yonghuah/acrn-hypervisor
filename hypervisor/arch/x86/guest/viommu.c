@@ -187,15 +187,15 @@ static void init_shadow_pgtable(struct acrn_viommu *viommu)
 	table->recover_exe_right = shadow_nop_recover_exe_right;
 }
 
-void viommu_shadow_add_mr(struct acrn_viommu *vdmar, uint64_t *pml4_page,
+void viommu_shadow_add_mr(struct acrn_viommu *viommu, uint64_t *pml4_page,
 	uint64_t hpa, uint64_t iova, uint64_t size, uint64_t prot)
 {
-	pgtable_add_map(pml4_page, hpa, iova, size, prot, &vdmar->shadow_pgtable);
+	pgtable_add_map(pml4_page, hpa, iova, size, prot, &viommu->shadow_pgtable);
 }
 
-void viommu_shadow_del_mr(struct acrn_viommu *vdmar, uint64_t *pml4_page, uint64_t iova, uint64_t size)
+void viommu_shadow_del_mr(struct acrn_viommu *viommu, uint64_t *pml4_page, uint64_t iova, uint64_t size)
 {
-	pgtable_modify_or_del_map(pml4_page, iova, size, 0UL, 0UL, &(vdmar->shadow_pgtable), MR_DEL);
+	pgtable_modify_or_del_map(pml4_page, iova, size, 0UL, 0UL, &(viommu->shadow_pgtable), MR_DEL);
 }
 
 /*
@@ -344,33 +344,23 @@ static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, u
 	const uint64_t *guest_pte;
 	uint64_t iova_end = addr + size, iova = addr;
 	uint64_t guest_pml4 = get_guest_pml4(viommu, did);
-#if CHECK_TIME
-	uint64_t t_enter, t_exit;
-
-	t_enter = ticks_to_us(cpu_ticks());
-#endif
+	uint64_t shadow_pml4 = get_shadow_pml4(viommu, did);
 
 	while (iova < iova_end) {
 		guest_pte = pgtable_lookup_entry((uint64_t *)guest_pml4, iova, &pte_size, &guest_pgtable);
-		if (guest_pte == NULL) { /* Remve mapping from shadow table */
-			req_size = iova_end - iova;
-			synced_size = shadow_sync(viommu, did, iova, 0UL, req_size, 0UL);
-		} else { /* Add mapping to shadow table */
+		if (guest_pte == NULL) {
+			synced_size = iova_end - iova;
+			/* Remove mapping from shadow table */
+			viommu_shadow_del_mr(viommu, (uint64_t *)shadow_pml4, iova, synced_size);
+		} else {
 			gpa = (((*guest_pte & (~EPT_PFN_HIGH_MASK)) & (~(pte_size - 1UL))) | (iova & (pte_size - 1UL)));
 			permit = *guest_pte & EPT_RWX;
-			if (permit == 0UL) {
-				pr_err("%s, DMAR%d, did:%d, Invalid Guest PTE:0x%llx.", __func__, viommu->drhd_rt->index, did, *guest_pte);
-			}
 			req_size = (iova + pte_size <= iova_end) ? pte_size : iova_end - iova;
+			/* Add mapping to shadow table */
 			synced_size = shadow_sync(viommu, did, iova, gpa, req_size, permit);
 		}
 		iova += synced_size;
 	}
-
-#if CHECK_TIME
-	t_exit = ticks_to_us(cpu_ticks());
-	insert_time(RECORD_IOTLB, t_exit - t_enter);
-#endif
 }
 
 static struct dmar_entry *get_shadow_context_entry(struct acrn_viommu *viommu, union pci_bdf *vbdf)
@@ -405,7 +395,11 @@ static struct dmar_entry *get_shadow_context_entry(struct acrn_viommu *viommu, u
 	return p_context_e;
 }
 
-/* support vIOMMU only for service VM, reserve some DID number for hypervisor */
+/*
+ * Reserve DID number for hypervisor usage, as support vIOMMU for service VM
+ * only for now, so we can ensure the domain ID is global unique in native
+ * IOMMU context table after this domain ID remapping.
+ */
 #define HV_RSV_DID_NUM 8U
 static uint32_t remap_did(__unused struct acrn_viommu *viommu, uint32_t guest_did)
 {
@@ -934,13 +928,13 @@ static void viommu_mmio_write(struct acrn_viommu *viommu, struct acrn_mmio_reque
 
 static int32_t viommu_mmio_handler(struct io_request *io_req, void *private_data)
 {
-	struct acrn_viommu *vdmar_unit = (struct acrn_viommu *)private_data;
+	struct acrn_viommu *viommu = (struct acrn_viommu *)private_data;
 	struct acrn_mmio_request *mmio = &io_req->reqs.mmio_request;
 
 	if (mmio->direction == ACRN_IOREQ_DIR_READ) {
-		mmio->value = viommu_mmio_read(vdmar_unit, mmio);
+		mmio->value = viommu_mmio_read(viommu, mmio);
 	} else {
-		viommu_mmio_write(vdmar_unit, mmio);
+		viommu_mmio_write(viommu, mmio);
 	}
 
 	return 0;
