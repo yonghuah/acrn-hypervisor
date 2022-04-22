@@ -359,30 +359,22 @@ static void walk_guest_pgtable_range(struct acrn_viommu *viommu, uint16_t did, u
 
 static struct dmar_entry *get_shadow_context_entry(struct acrn_viommu *viommu, union pci_bdf *vbdf)
 {
-	uint32_t i;
-	union pci_bdf pbdf;
+	union pci_bdf *pbdf;
 	struct pci_vdev *vdev;
 	struct acrn_vm *vm = viommu->vm;
 	struct acrn_vpci *vpci = &(vm->vpci);
-	struct dmar_entry *p_rta, *p_root_e, *p_context, *p_context_e = NULL;
+	struct dmar_entry *p_root_tbl_base, *p_root_e, *p_context, *p_context_e = NULL;
 
-	p_rta = (struct dmar_entry *)viommu->drhd_rt->root_table_addr;
-	for (i = 0; i < vpci->pci_vdev_cnt; i++) {
-		vdev =&(vpci->pci_vdevs[i]);
-		if ((vbdf->bits.b == vdev->bdf.bits.b) &&
-				(vbdf->bits.d == vdev->bdf.bits.d) &&
-				(vbdf->bits.f == vdev->bdf.bits.f)) {
-
-			memcpy_s(&pbdf, sizeof(union pci_bdf), &(vdev->pdev->bdf), sizeof(union pci_bdf));
-
-			p_root_e = p_rta + pbdf.fields.bus;
-			ASSERT(((p_root_e->lo_64 & 0x1) == 1), "Invalid Root Entry.");
-
-			p_context = (struct dmar_entry *)(p_root_e->lo_64 & PAGE_MASK);
-
-			p_context_e = p_context + pbdf.fields.devfun;
-			break;
-		}
+	p_root_tbl_base = (struct dmar_entry *)viommu->drhd_rt->root_table_addr;
+	spinlock_obtain(&vpci->lock);
+	vdev = pci_find_vdev(vpci, *vbdf);
+	spinlock_release(&vpci->lock);
+	if ((vdev != NULL) && (vdev->pdev != NULL)) {
+		pbdf = &(vdev->pdev->bdf);
+		p_root_e = p_root_tbl_base + pbdf->fields.bus;
+		ASSERT(((p_root_e->lo_64 & 0x1) == 1), "Invalid Root Entry.");
+		p_context = (struct dmar_entry *)(p_root_e->lo_64 & PAGE_MASK);
+		p_context_e = p_context + pbdf->fields.devfun;
 	}
 
 	ASSERT(p_context_e != NULL, "Not found context entry.");
