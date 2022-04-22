@@ -260,7 +260,7 @@ static void create_shadow_table(struct acrn_viommu *viommu, uint32_t guest_did)
 
 }
 
-static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, uint64_t iova, uint64_t gpa, uint64_t size, uint64_t permit)
+static uint64_t shadow_map_handler(struct acrn_viommu *viommu, uint16_t did, uint64_t iova, uint64_t gpa, uint64_t size, uint64_t permit)
 {
 	const uint64_t *shadow_pte;
 	uint64_t hpa, pte_size, synced_size = size;
@@ -279,18 +279,12 @@ static uint64_t shadow_sync_handler(struct acrn_viommu *viommu, uint16_t did, ui
 			viommu_shadow_add_mr(viommu, shadow_pml4, hpa, iova, size, permit);
 		}
 
-	} else { /* remove mapping from from shadow */
-		if (shadow_pte) {
-			viommu_shadow_del_mr(viommu, shadow_pml4, iova, pte_size);
-			synced_size = pte_size;
-		} else {
-			synced_size = PTE_SIZE;
-		}
 	}
 	return synced_size;
 }
 
-static void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable_mapping_handler leaf_handler)
+/*@pre: shadow table shall be empty before doing this page table walk */
+static void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable_mapping_handler shadow_map)
 {
 	uint64_t *pml4e, *pdpte, *pde, *pte;
 	uint64_t i, j, k, m;
@@ -311,7 +305,7 @@ static void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable
 			if (pdpte_large(*pdpte) != 0UL) {
 				iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT);
 				gpa = (*pdpte & (~EPT_PFN_HIGH_MASK)) & (~(PDPTE_SIZE - 1UL));
-				leaf_handler(viommu, did, iova, gpa, PDPTE_SIZE, ((*pdpte) & EPT_RWX));
+				shadow_map(viommu, did, iova, gpa, PDPTE_SIZE, ((*pdpte) & EPT_RWX));
 				continue;
 			}
 			for (k = 0UL; k < PTRS_PER_PDE; k++) {
@@ -322,7 +316,7 @@ static void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable
 				if (pde_large(*pde) != 0UL) {
 					iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT);
 					gpa = (*pde & (~EPT_PFN_HIGH_MASK)) & (~(PDE_SIZE - 1UL));
-					leaf_handler(viommu, did, iova, gpa, PDE_SIZE, ((*pde) & EPT_RWX));
+					shadow_map(viommu, did, iova, gpa, PDE_SIZE, ((*pde) & EPT_RWX));
 					continue;
 				}
 				for (m = 0UL; m < PTRS_PER_PTE; m++) {
@@ -330,7 +324,7 @@ static void walk_guest_pgtable(struct acrn_viommu *viommu, uint16_t did, pgtable
 					if (pgentry_present(table, (*pte))) {
 						iova = (i << PML4E_SHIFT) | (j << PDPTE_SHIFT) | (k << PDE_SHIFT) | (m << PTE_SHIFT);
 						gpa = (*pte & (~EPT_PFN_HIGH_MASK)) & (~(PTE_SIZE - 1UL));
-						leaf_handler(viommu, did, iova, gpa, PTE_SIZE, ((*pte) & EPT_RWX));
+						shadow_map(viommu, did, iova, gpa, PTE_SIZE, ((*pte) & EPT_RWX));
 					}
 				}
 			}
@@ -532,7 +526,7 @@ static int iotlb_inv_psi(struct acrn_viommu *viommu, struct dmar_entry *iotlb_in
 	guest_pml4 = get_guest_pml4(viommu, (uint32_t)did);
 	shadow_pml4 = get_shadow_pml4(viommu, (uint32_t)did);
 	if ((guest_pml4 != 0UL) && (shadow_pml4 != 0UL)) {
-		walk_guest_pgtable_range(viommu, did, addr, size, shadow_sync_handler);
+		walk_guest_pgtable_range(viommu, did, addr, size, shadow_map_handler);
 	}
 
 	return status;
@@ -541,17 +535,13 @@ static int iotlb_inv_psi(struct acrn_viommu *viommu, struct dmar_entry *iotlb_in
 static int iotlb_inv_domain(struct acrn_viommu *viommu, uint32_t did)
 {
 	uint64_t guest_pml4, shadow_pml4;
-	/*int index = viommu->drhd_rt->index;*/
 
 	guest_pml4 = get_guest_pml4(viommu, did);
 	shadow_pml4 = get_shadow_pml4(viommu, did);
 
 	if ((guest_pml4 != 0UL) && (shadow_pml4 != 0UL)) {
-		/*pr_err("%s, DMAR%d: did:%d, Re-Sync shadow, guest_pml4:0x%llx, shadow_pml4:0x%llx.",
-			__func__, index, did, guest_pml4, shadow_pml4);*/
 		free_shadow_table(viommu, did);
-
-		walk_guest_pgtable(viommu, did, shadow_sync_handler);
+		walk_guest_pgtable(viommu, did, shadow_map_handler);
 	}
 	return 0;
 }
